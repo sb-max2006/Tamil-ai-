@@ -1,0 +1,1813 @@
+<!DOCTYPE html>
+<html lang="ta">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>தமிழ் குரல் & எழுத்து சேட்போட் (ஆஃப்லைன்)</title>
+    <style>
+        /* பொதுவான ஸ்டைலிங் */
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #e0f2f7; /* லேசான நீல பின்னணி */
+            color: #333;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        #chat-container {
+            width: 95%;
+            max-width: 600px;
+            background-color: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+            padding: 25px;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        h1 {
+            color: #007bff; /* நீல தலைப்பு */
+            text-align: center;
+            margin-bottom: 20px;
+            font-size: 1.8em;
+        }
+        #messages {
+            height: 350px;
+            overflow-y: auto;
+            border: 1px solid #b3e0ff; /* லேசான நீல பார்டர் */
+            border-radius: 8px;
+            padding: 15px;
+            background-color: #f9f9f9; /* வெளிறிய வெள்ளை சாட் பின்னணி */
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .message {
+            padding: 10px 15px;
+            border-radius: 20px; /* வட்டமான பபில்கள் */
+            max-width: 80%;
+            word-wrap: break-word;
+            line-height: 1.4;
+            font-size: 0.95em;
+        }
+        .user-message {
+            align-self: flex-end; /* வலதுபுறமாக சீரமைக்கவும் */
+            background-color: #dcf8c6; /* லேசான பச்சை */
+            color: #333;
+            margin-right: 0;
+        }
+        .bot-message {
+            align-self: flex-start; /* இடதுபுறமாக சீரமைக்கவும் */
+            background-color: #e0f0f7; /* லேசான நீலம் */
+            color: #333;
+            margin-left: 0;
+        }
+        #input-area {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        #user-input {
+            flex-grow: 1;
+            padding: 10px 15px;
+            border: 1px solid #b3e0ff;
+            border-radius: 8px;
+            font-size: 1em;
+        }
+        #send-btn, #voice-btn {
+            padding: 12px 20px;
+            background-color: #28a745; /* பச்சை */
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: bold;
+            button-align: center;
+            transition: background-color 0.3s ease;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        #send-btn:hover, #voice-btn:hover {
+            background-color: #218838; /* அடர் பச்சை */
+        }
+        #send-btn:disabled, #voice-btn:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+        #status {
+            text-align: center;
+            color: #666;
+            font-size: 0.9em;
+            margin-top: -5px; /* இடைவெளியை சரிசெய்ய */
+            min-height: 20px; /* லேஅவுட் நகர்வைத் தடுக்க */
+        }
+    </style>
+</head>
+<body>
+    <div id="chat-container">
+        <h1>தமிழ் குரல் & எழுத்து சேட்போட்</h1>
+        <div id="messages"></div>
+        <div id="input-area">
+            <input type="text" id="user-input" placeholder="உங்கள் கேள்வியை உள்ளிடவும்...">
+            <button id="send-btn">அனுப்பு</button>
+            <button id="voice-btn">பேசவும்</button>
+        </div>
+        <p id="status">சேட்போட் தயாராக உள்ளது.</p>
+    </div>
+
+    <script>
+        const messagesDiv = document.getElementById('messages');
+        const userInput = document.getElementById('user-input');
+        const sendBtn = document.getElementById('send-btn');
+        const voiceBtn = document.getElementById('voice-btn');
+        const statusDiv = document.getElementById('status');
+
+        let recognition; // குரல் அங்கீகார ஆப்ஜெக்ட்
+        let synth = window.speechSynthesis; // எழுத்து-குரல் ஆப்ஜெக்ட்
+        let recognizing = false; // குரல் அங்கீகாரம் தற்போது நடைபெறுகிறதா என்பதை கண்காணிக்க
+
+        // --- சேவை பணியாளர் (Service Worker) பதிவு ---
+        // சேவை பணியாளர் ஒரு தனி JavaScript கோப்பில் (service-worker.js) இருக்க வேண்டும்.
+        // உலாவியின் பாதுகாப்பு காரணங்களுக்காக இது ஒரு தனி கோப்பாகவே இருக்க வேண்டும்.
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./service-worker.js')
+                    .then((registration) => {
+                        console.log('ServiceWorker பதிவு வெற்றிகரமானது, scope: ', registration.scope);
+                        statusDiv.textContent = 'சேட்போட் தயாராக உள்ளது (ஆஃப்லைன் வசதி).';
+                    })
+                    .catch((err) => {
+                        console.error('ServiceWorker பதிவு தோல்வியடைந்தது: ', err);
+                        statusDiv.textContent = 'Service Worker பதிவு செய்ய முடியவில்லை. ஆஃப்லைன் வசதி கிடைக்காது.';
+                    });
+            });
+        } else {
+            statusDiv.textContent = 'உங்கள் உலாவி Service Workers ஐ ஆதரிக்கவில்லை. ஆஃப்லைன் வசதி கிடைக்காது.';
+        }
+
+        // --- குரல் அங்கீகாரம் (Voice to Text - STT) ---
+        if ('webkitSpeechRecognition' in window) {
+            recognition = new webkitSpeechRecognition();
+            recognition.continuous = false; // ஒரு வாக்கியத்தைக் கேட்டவுடன் நிறுத்தவும்
+            recognition.interimResults = false; // இறுதி முடிவுகளை மட்டும் பெறவும்
+            recognition.lang = 'ta-IN'; // தமிழ் மொழி
+
+            recognition.onstart = () => {
+                recognizing = true;
+                statusDiv.textContent = 'கேட்கிறது... பேசுங்கள்.';
+                voiceBtn.textContent = 'கேட்டுக்கொண்டிருக்கிறது...';
+                voiceBtn.disabled = true;
+                sendBtn.disabled = true;
+                userInput.disabled = true;
+            };
+
+            recognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript;
+                addMessage(transcript, 'user-message');
+                processUserMessage(transcript);
+                statusDiv.textContent = '';
+                voiceBtn.textContent = 'பேசவும்';
+                voiceBtn.disabled = false;
+                sendBtn.disabled = false;
+                userInput.disabled = false;
+            };
+
+            recognition.onerror = (event) => {
+                recognizing = false;
+                console.error('குரல் அங்கீகார பிழை:', event.error);
+                statusDiv.textContent = `குரல் அங்கீகாரத்தில் பிழை ஏற்பட்டது: ${event.error}. மைக்ரோஃபோன் அனுமதி உள்ளதா என சரிபார்க்கவும்.`;
+                voiceBtn.textContent = 'பேசவும்';
+                voiceBtn.disabled = false;
+                sendBtn.disabled = false;
+                userInput.disabled = false;
+            };
+
+            recognition.onend = () => {
+                recognizing = false;
+                if (statusDiv.textContent === 'கேட்கிறது... பேசுங்கள்.') {
+                    statusDiv.textContent = 'பேசுவது நிறுத்தப்பட்டது.';
+                }
+                voiceBtn.textContent = 'பேசவும்';
+                voiceBtn.disabled = false;
+                sendBtn.disabled = false;
+                userInput.disabled = false;
+            };
+
+            voiceBtn.addEventListener('click', () => {
+                if (recognizing) {
+                    recognition.stop();
+                    return;
+                }
+                recognition.start();
+            });
+
+        } else {
+            statusDiv.textContent = 'உங்கள் உலாவி குரல் அங்கீகாரத்தை ஆதரிக்கவில்லை. சமீபத்திய Chrome அல்லது Edge உலாவியைப் பயன்படுத்தவும்.';
+            voiceBtn.disabled = true;
+        }
+
+        // --- சாட் UI செயல்பாடுகள் ---
+        function addMessage(text, type) {
+            const messageElement = document.createElement('div');
+            messageElement.classList.add('message', type);
+            messageElement.textContent = text;
+            messagesDiv.appendChild(messageElement);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight; // கீழே ஸ்க்ரோல் செய்யவும்
+        }
+
+        // --- பயனர் உள்ளீட்டை அனுப்புதல் (Text Input) ---
+        sendBtn.addEventListener('click', () => {
+            const message = userInput.value.trim();
+            if (message) {
+                addMessage(message, 'user-message');
+                processUserMessage(message);
+                userInput.value = ''; // உள்ளீட்டை அழிக்கவும்
+            }
+        });
+
+        // Enter கீயை அழுத்தும் போது செய்தியை அனுப்பவும்
+        userInput.addEventListener('keypress', (event) => {
+            if (event.key === 'Enter') {
+                sendBtn.click();
+            }
+        });
+
+        // --- சேட்போட் பதில் லாஜிக் (எளிமையான விதி அடிப்படையிலானது, ஆஃப்லைனுக்காக) ---
+        function processUserMessage(message) {
+            let botResponse = '';
+            const lowerCaseMessage = message.toLowerCase();
+
+            if (lowerCaseMessage.includes('வணக்கம்') || lowerCaseMessage.includes('ஹாய்')) {
+                botResponse = 'வணக்கம்! நான் ஒரு தமிழ் சேட்போட். நான் உங்களுக்கு எப்படி உதவ முடியும்?';
+            } else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன') || lowerCaseMessage.includes('உன் பெயர் என்ன')) {
+                botResponse = 'நான் ஒரு நிரல். என் பெயர் தமிழ்கிறுக்கன்';
+            } else if (lowerCaseMessage.includes('நாள் எப்படி இருக்கிறது') || lowerCaseMessage.includes('எப்படி இருக்கிறாய்')) {
+                botResponse = 'நான் ஒரு நிரல். எனக்கு உணர்வுகள் இல்லை. ஆனால், உங்களுக்கு உதவ நான் தயாராக இருக்கிறேன்.';
+            } else if (lowerCaseMessage.includes('நன்றி') || lowerCaseMessage.includes('ரொம்ப நன்றி')) {
+                botResponse = 'உங்களுக்கு வரவேற்பு!';
+            } else if (lowerCaseMessage.includes('நேரம் என்ன') || lowerCaseMessage.includes('இப்போ என்ன நேரம்')) {
+                const now = new Date();
+                botResponse = `இப்போது ${now.toLocaleTimeString('ta-IN')} ஆகிறது.`;
+            } else if (lowerCaseMessage.includes('தேதி என்ன') || lowerCaseMessage.includes('இன்று என்ன தேதி')) {
+                const now = new Date();
+                botResponse = `இன்று ${now.toLocaleDateString('ta-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.`;
+            } else if (lowerCaseMessage.includes('உதவி') || lowerCaseMessage.includes('உதவுங்கள்')) {
+                botResponse = 'நான் சில எளிய கேள்விகளுக்கு பதிலளிக்க முடியும். நீங்கள் என்ன கேட்க விரும்புகிறீர்கள்?';
+            } else if (lowerCaseMessage.includes('goodbye') || lowerCaseMessage.includes('பிரியாவிடை') || lowerCaseMessage.includes('சரி நான் போகிறேன்')) {
+                botResponse = 'பிரியாவிடை! மீண்டும் சந்திப்போம்.';
+            } else if (lowerCaseMessage.includes('தமிழ்நாட்டின் தலைநகரம் என்ன') || lowerCaseMessage.includes('தமிழ்நாடு தலைநகர்')) {
+        botResponse = 'தமிழ்நாட்டின் தலைநகரம் சென்னை.'; // புதிய தகவல் இங்கே சேர்க்கப்பட்டுள்ளது
+    } else if (lowerCaseMessage.includes('இந்தியா சுதந்திரம் அடைந்த ஆண்டு என்ன') || lowerCaseMessage.includes('இந்தியா சுதந்திரம்')) {
+        botResponse = 'இந்தியா 1947 ஆம் ஆண்டு ஆகஸ்ட் 15 ஆம் தேதி சுதந்திரம் அடைந்தது.'; // மேலும் ஒரு தகவல்
+    } else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன') || lowerCaseMessage.includes('உன் பெயர் என்ன')) {
+        botResponse = 'நான் ஒரு நிரல். எனக்குப் பெயர் இல்லை.';
+    }if (lowerCaseMessage.includes('நாளை வானிலை எப்படி இருக்கும்')) {
+    botResponse = 'நாளை வெப்பம் மற்றும் மேகமூட்டம் இருக்கும் என்று எதிர்பார்க்கப்படுகிறது.';
+}
+else if (lowerCaseMessage.includes('நான் சாப்பிட்டேன்')) {
+    botResponse = 'சூப்பர்! என்ன சாப்பிட்டீர்கள்?';
+}
+else if (lowerCaseMessage.includes('எனக்கு உதவி வேண்டும்')) {
+    botResponse = 'நிச்சயமாக! என்ன உதவி வேண்டும் என்று சொல்லுங்கள்.';
+}
+else if (lowerCaseMessage.includes('நான் சாப்பிட்டேன்')) {
+    botResponse = 'சூப்பர்! என்ன சாப்பிட்டீர்கள்?';
+}
+else if (lowerCaseMessage.includes('நான் சாப்பிட்டேன்')) {
+    botResponse = 'சூப்பர்! என்ன சாப்பிட்டீர்கள்?';
+}
+else if (lowerCaseMessage.includes('பிரியாவிடம் பேச வேண்டும்')) {
+    botResponse = 'சரி, பிரியாவை அழைக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('நாளை வானிலை எப்படி இருக்கும்')) {
+    botResponse = 'நாளை வெப்பம் மற்றும் மேகமூட்டம் இருக்கும் என்று எதிர்பார்க்கப்படுகிறது.';
+}
+else if (lowerCaseMessage.includes('எனக்கு உதவி வேண்டும்')) {
+    botResponse = 'நிச்சயமாக! என்ன உதவி வேண்டும் என்று சொல்லுங்கள்.';
+}
+else if (lowerCaseMessage.includes('பிரியாவிடம் பேச வேண்டும்')) {
+    botResponse = 'சரி, பிரியாவை அழைக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('எனக்கு உதவி வேண்டும்')) {
+    botResponse = 'நிச்சயமாக! என்ன உதவி வேண்டும் என்று சொல்லுங்கள்.';
+}
+else if (lowerCaseMessage.includes('ஹாய்')) {
+    botResponse = 'ஹாய்! உங்களுக்காக என்ன செய்யலாம்?';
+}
+else if (lowerCaseMessage.includes('நன்றி')) {
+    botResponse = 'வணக்கம்! உங்களுக்குத் தேவையான உதவிக்கு எப்போதும் தயாராக இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('நான் பசிக்குது')) {
+    botResponse = 'சாப்பிட ஏதாவது எடுத்துக்கொள்ளுங்கள்!';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('ஹாய்')) {
+    botResponse = 'ஹாய்! உங்களுக்காக என்ன செய்யலாம்?';
+}
+else if (lowerCaseMessage.includes('எனக்கு உதவி வேண்டும்')) {
+    botResponse = 'நிச்சயமாக! என்ன உதவி வேண்டும் என்று சொல்லுங்கள்.';
+}
+else if (lowerCaseMessage.includes('நாளை வானிலை எப்படி இருக்கும்')) {
+    botResponse = 'நாளை வெப்பம் மற்றும் மேகமூட்டம் இருக்கும் என்று எதிர்பார்க்கப்படுகிறது.';
+}
+else if (lowerCaseMessage.includes('எனக்கு உதவி வேண்டும்')) {
+    botResponse = 'நிச்சயமாக! என்ன உதவி வேண்டும் என்று சொல்லுங்கள்.';
+}
+else if (lowerCaseMessage.includes('நீங்கள் எங்கே இருக்கிறீர்கள்')) {
+    botResponse = 'நான் இணையத்தில் இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('நீங்கள் எங்கே இருக்கிறீர்கள்')) {
+    botResponse = 'நான் இணையத்தில் இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('நான் பசிக்குது')) {
+    botResponse = 'சாப்பிட ஏதாவது எடுத்துக்கொள்ளுங்கள்!';
+}
+else if (lowerCaseMessage.includes('நாளை வானிலை எப்படி இருக்கும்')) {
+    botResponse = 'நாளை வெப்பம் மற்றும் மேகமூட்டம் இருக்கும் என்று எதிர்பார்க்கப்படுகிறது.';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('நாளை வானிலை எப்படி இருக்கும்')) {
+    botResponse = 'நாளை வெப்பம் மற்றும் மேகமூட்டம் இருக்கும் என்று எதிர்பார்க்கப்படுகிறது.';
+}
+else if (lowerCaseMessage.includes('நாளை வானிலை எப்படி இருக்கும்')) {
+    botResponse = 'நாளை வெப்பம் மற்றும் மேகமூட்டம் இருக்கும் என்று எதிர்பார்க்கப்படுகிறது.';
+}
+else if (lowerCaseMessage.includes('நன்றி')) {
+    botResponse = 'வணக்கம்! உங்களுக்குத் தேவையான உதவிக்கு எப்போதும் தயாராக இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('நாளை வானிலை எப்படி இருக்கும்')) {
+    botResponse = 'நாளை வெப்பம் மற்றும் மேகமூட்டம் இருக்கும் என்று எதிர்பார்க்கப்படுகிறது.';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('ஹாய்')) {
+    botResponse = 'ஹாய்! உங்களுக்காக என்ன செய்யலாம்?';
+}
+else if (lowerCaseMessage.includes('நான் பசிக்குது')) {
+    botResponse = 'சாப்பிட ஏதாவது எடுத்துக்கொள்ளுங்கள்!';
+}
+else if (lowerCaseMessage.includes('வணக்கம்')) {
+    botResponse = 'வணக்கம்! நான் ஒரு தமிழ் சேட்போட். எப்படி உதவலாம்?';
+}
+else if (lowerCaseMessage.includes('நான் பசிக்குது')) {
+    botResponse = 'சாப்பிட ஏதாவது எடுத்துக்கொள்ளுங்கள்!';
+}
+else if (lowerCaseMessage.includes('பிரியாவிடம் பேச வேண்டும்')) {
+    botResponse = 'சரி, பிரியாவை அழைக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('நன்றி')) {
+    botResponse = 'வணக்கம்! உங்களுக்குத் தேவையான உதவிக்கு எப்போதும் தயாராக இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('எனக்கு உதவி வேண்டும்')) {
+    botResponse = 'நிச்சயமாக! என்ன உதவி வேண்டும் என்று சொல்லுங்கள்.';
+}
+else if (lowerCaseMessage.includes('பிரியாவிடம் பேச வேண்டும்')) {
+    botResponse = 'சரி, பிரியாவை அழைக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('நன்றி')) {
+    botResponse = 'வணக்கம்! உங்களுக்குத் தேவையான உதவிக்கு எப்போதும் தயாராக இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('நாளை வானிலை எப்படி இருக்கும்')) {
+    botResponse = 'நாளை வெப்பம் மற்றும் மேகமூட்டம் இருக்கும் என்று எதிர்பார்க்கப்படுகிறது.';
+}
+else if (lowerCaseMessage.includes('நன்றி')) {
+    botResponse = 'வணக்கம்! உங்களுக்குத் தேவையான உதவிக்கு எப்போதும் தயாராக இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('வணக்கம்')) {
+    botResponse = 'வணக்கம்! நான் ஒரு தமிழ் சேட்போட். எப்படி உதவலாம்?';
+}
+else if (lowerCaseMessage.includes('நான் சாப்பிட்டேன்')) {
+    botResponse = 'சூப்பர்! என்ன சாப்பிட்டீர்கள்?';
+}
+else if (lowerCaseMessage.includes('நன்றி')) {
+    botResponse = 'வணக்கம்! உங்களுக்குத் தேவையான உதவிக்கு எப்போதும் தயாராக இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('நான் சாப்பிட்டேன்')) {
+    botResponse = 'சூப்பர்! என்ன சாப்பிட்டீர்கள்?';
+}
+else if (lowerCaseMessage.includes('நீங்கள் எங்கே இருக்கிறீர்கள்')) {
+    botResponse = 'நான் இணையத்தில் இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('வணக்கம்')) {
+    botResponse = 'வணக்கம்! நான் ஒரு தமிழ் சேட்போட். எப்படி உதவலாம்?';
+}
+else if (lowerCaseMessage.includes('வணக்கம்')) {
+    botResponse = 'வணக்கம்! நான் ஒரு தமிழ் சேட்போட். எப்படி உதவலாம்?';
+}
+else if (lowerCaseMessage.includes('எனக்கு உதவி வேண்டும்')) {
+    botResponse = 'நிச்சயமாக! என்ன உதவி வேண்டும் என்று சொல்லுங்கள்.';
+}
+else if (lowerCaseMessage.includes('எனக்கு உதவி வேண்டும்')) {
+    botResponse = 'நிச்சயமாக! என்ன உதவி வேண்டும் என்று சொல்லுங்கள்.';
+}
+else if (lowerCaseMessage.includes('வணக்கம்')) {
+    botResponse = 'வணக்கம்! நான் ஒரு தமிழ் சேட்போட். எப்படி உதவலாம்?';
+}
+else if (lowerCaseMessage.includes('நான் சாப்பிட்டேன்')) {
+    botResponse = 'சூப்பர்! என்ன சாப்பிட்டீர்கள்?';
+}
+else if (lowerCaseMessage.includes('வணக்கம்')) {
+    botResponse = 'வணக்கம்! நான் ஒரு தமிழ் சேட்போட். எப்படி உதவலாம்?';
+}
+else if (lowerCaseMessage.includes('நாளை வானிலை எப்படி இருக்கும்')) {
+    botResponse = 'நாளை வெப்பம் மற்றும் மேகமூட்டம் இருக்கும் என்று எதிர்பார்க்கப்படுகிறது.';
+}
+else if (lowerCaseMessage.includes('ஹாய்')) {
+    botResponse = 'ஹாய்! உங்களுக்காக என்ன செய்யலாம்?';
+}
+else if (lowerCaseMessage.includes('பிரியாவிடம் பேச வேண்டும்')) {
+    botResponse = 'சரி, பிரியாவை அழைக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('ஹாய்')) {
+    botResponse = 'ஹாய்! உங்களுக்காக என்ன செய்யலாம்?';
+}
+else if (lowerCaseMessage.includes('நான் சாப்பிட்டேன்')) {
+    botResponse = 'சூப்பர்! என்ன சாப்பிட்டீர்கள்?';
+}
+else if (lowerCaseMessage.includes('எனக்கு உதவி வேண்டும்')) {
+    botResponse = 'நிச்சயமாக! என்ன உதவி வேண்டும் என்று சொல்லுங்கள்.';
+}
+else if (lowerCaseMessage.includes('வணக்கம்')) {
+    botResponse = 'வணக்கம்! நான் ஒரு தமிழ் சேட்போட். எப்படி உதவலாம்?';
+}
+else if (lowerCaseMessage.includes('ஹாய்')) {
+    botResponse = 'ஹாய்! உங்களுக்காக என்ன செய்யலாம்?';
+}
+else if (lowerCaseMessage.includes('நான் சாப்பிட்டேன்')) {
+    botResponse = 'சூப்பர்! என்ன சாப்பிட்டீர்கள்?';
+}
+else if (lowerCaseMessage.includes('நான் பசிக்குது')) {
+    botResponse = 'சாப்பிட ஏதாவது எடுத்துக்கொள்ளுங்கள்!';
+}
+else if (lowerCaseMessage.includes('நாளை வானிலை எப்படி இருக்கும்')) {
+    botResponse = 'நாளை வெப்பம் மற்றும் மேகமூட்டம் இருக்கும் என்று எதிர்பார்க்கப்படுகிறது.';
+}
+else if (lowerCaseMessage.includes('வணக்கம்')) {
+    botResponse = 'வணக்கம்! நான் ஒரு தமிழ் சேட்போட். எப்படி உதவலாம்?';
+}else if (lowerCaseMessage.includes('நாளை வானிலை எப்படி இருக்கும்')) {
+    botResponse = 'நாளை வெப்பம் மற்றும் மேகமூட்டம் இருக்கும் என்று எதிர்பார்க்கப்படுகிறது.';
+}
+else if (lowerCaseMessage.includes('நீங்கள் எங்கே இருக்கிறீர்கள்')) {
+    botResponse = 'நான் இணையத்தில் இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('வணக்கம்')) {
+    botResponse = 'வணக்கம்! நான் ஒரு தமிழ் சேட்போட். எப்படி உதவலாம்?';
+}
+else if (lowerCaseMessage.includes('எனக்கு உதவி வேண்டும்')) {
+    botResponse = 'நிச்சயமாக! என்ன உதவி வேண்டும் என்று சொல்லுங்கள்.';
+}
+else if (lowerCaseMessage.includes('நன்றி')) {
+    botResponse = 'வணக்கம்! உங்களுக்குத் தேவையான உதவிக்கு எப்போதும் தயாராக இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('எனக்கு உதவி வேண்டும்')) {
+    botResponse = 'நிச்சயமாக! என்ன உதவி வேண்டும் என்று சொல்லுங்கள்.';
+}
+else if (lowerCaseMessage.includes('நான் சாப்பிட்டேன்')) {
+    botResponse = 'சூப்பர்! என்ன சாப்பிட்டீர்கள்?';
+}
+else if (lowerCaseMessage.includes('ஹாய்')) {
+    botResponse = 'ஹாய்! உங்களுக்காக என்ன செய்யலாம்?';
+}
+else if (lowerCaseMessage.includes('ஹாய்')) {
+    botResponse = 'ஹாய்! உங்களுக்காக என்ன செய்யலாம்?';
+}
+else if (lowerCaseMessage.includes('நீங்கள் எங்கே இருக்கிறீர்கள்')) {
+    botResponse = 'நான் இணையத்தில் இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('எனக்கு உதவி வேண்டும்')) {
+    botResponse = 'நிச்சயமாக! என்ன உதவி வேண்டும் என்று சொல்லுங்கள்.';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('நன்றி')) {
+    botResponse = 'வணக்கம்! உங்களுக்குத் தேவையான உதவிக்கு எப்போதும் தயாராக இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('நீங்கள் எங்கே இருக்கிறீர்கள்')) {
+    botResponse = 'நான் இணையத்தில் இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('நான் பசிக்குது')) {
+    botResponse = 'சாப்பிட ஏதாவது எடுத்துக்கொள்ளுங்கள்!';
+}
+else if (lowerCaseMessage.includes('ஹாய்')) {
+    botResponse = 'ஹாய்! உங்களுக்காக என்ன செய்யலாம்?';
+}
+else if (lowerCaseMessage.includes('எனக்கு உதவி வேண்டும்')) {
+    botResponse = 'நிச்சயமாக! என்ன உதவி வேண்டும் என்று சொல்லுங்கள்.';
+}
+else if (lowerCaseMessage.includes('நன்றி')) {
+    botResponse = 'வணக்கம்! உங்களுக்குத் தேவையான உதவிக்கு எப்போதும் தயாராக இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('நன்றி')) {
+    botResponse = 'வணக்கம்! உங்களுக்குத் தேவையான உதவிக்கு எப்போதும் தயாராக இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('ஹாய்')) {
+    botResponse = 'ஹாய்! உங்களுக்காக என்ன செய்யலாம்?';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('வணக்கம்')) {
+    botResponse = 'வணக்கம்! நான் ஒரு தமிழ் சேட்போட். எப்படி உதவலாம்?';
+}
+else if (lowerCaseMessage.includes('நீங்கள் எங்கே இருக்கிறீர்கள்')) {
+    botResponse = 'நான் இணையத்தில் இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('நன்றி')) {
+    botResponse = 'வணக்கம்! உங்களுக்குத் தேவையான உதவிக்கு எப்போதும் தயாராக இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('நீங்கள் எங்கே இருக்கிறீர்கள்')) {
+    botResponse = 'நான் இணையத்தில் இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('பிரியாவிடம் பேச வேண்டும்')) {
+    botResponse = 'சரி, பிரியாவை அழைக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('எனக்கு உதவி வேண்டும்')) {
+    botResponse = 'நிச்சயமாக! என்ன உதவி வேண்டும் என்று சொல்லுங்கள்.';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('எனக்கு உதவி வேண்டும்')) {
+    botResponse = 'நிச்சயமாக! என்ன உதவி வேண்டும் என்று சொல்லுங்கள்.';
+}
+else if (lowerCaseMessage.includes('பிரியாவிடம் பேச வேண்டும்')) {
+    botResponse = 'சரி, பிரியாவை அழைக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('நீங்கள் எங்கே இருக்கிறீர்கள்')) {
+    botResponse = 'நான் இணையத்தில் இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('நீங்கள் எங்கே இருக்கிறீர்கள்')) {
+    botResponse = 'நான் இணையத்தில் இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('ஹாய்')) {
+    botResponse = 'ஹாய்! உங்களுக்காக என்ன செய்யலாம்?';
+}
+else if (lowerCaseMessage.includes('எனக்கு உதவி வேண்டும்')) {
+    botResponse = 'நிச்சயமாக! என்ன உதவி வேண்டும் என்று சொல்லுங்கள்.';
+}
+else if (lowerCaseMessage.includes('நான் சாப்பிட்டேன்')) {
+    botResponse = 'சூப்பர்! என்ன சாப்பிட்டீர்கள்?';
+}
+else if (lowerCaseMessage.includes('நான் சாப்பிட்டேன்')) {
+    botResponse = 'சூப்பர்! என்ன சாப்பிட்டீர்கள்?';
+}
+else if (lowerCaseMessage.includes('எனக்கு உதவி வேண்டும்')) {
+    botResponse = 'நிச்சயமாக! என்ன உதவி வேண்டும் என்று சொல்லுங்கள்.';
+}
+else if (lowerCaseMessage.includes('நான் பசிக்குது')) {
+    botResponse = 'சாப்பிட ஏதாவது எடுத்துக்கொள்ளுங்கள்!';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('பிரியாவிடம் பேச வேண்டும்')) {
+    botResponse = 'சரி, பிரியாவை அழைக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('நாளை வானிலை எப்படி இருக்கும்')) {
+    botResponse = 'நாளை வெப்பம் மற்றும் மேகமூட்டம் இருக்கும் என்று எதிர்பார்க்கப்படுகிறது.';
+}
+else if (lowerCaseMessage.includes('நான் சாப்பிட்டேன்')) {
+    botResponse = 'சூப்பர்! என்ன சாப்பிட்டீர்கள்?';
+}
+else if (lowerCaseMessage.includes('நன்றி')) {
+    botResponse = 'வணக்கம்! உங்களுக்குத் தேவையான உதவிக்கு எப்போதும் தயாராக இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('வணக்கம்')) {
+    botResponse = 'வணக்கம்! நான் ஒரு தமிழ் சேட்போட். எப்படி உதவலாம்?';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('பிரியாவிடம் பேச வேண்டும்')) {
+    botResponse = 'சரி, பிரியாவை அழைக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('ஹாய்')) {
+    botResponse = 'ஹாய்! உங்களுக்காக என்ன செய்யலாம்?';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('நான் சாப்பிட்டேன்')) {
+    botResponse = 'சூப்பர்! என்ன சாப்பிட்டீர்கள்?';
+}
+else if (lowerCaseMessage.includes('நன்றி')) {
+    botResponse = 'வணக்கம்! உங்களுக்குத் தேவையான உதவிக்கு எப்போதும் தயாராக இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('நான் பசிக்குது')) {
+    botResponse = 'சாப்பிட ஏதாவது எடுத்துக்கொள்ளுங்கள்!';
+}
+else if (lowerCaseMessage.includes('நீங்கள் எங்கே இருக்கிறீர்கள்')) {
+    botResponse = 'நான் இணையத்தில் இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('நாளை வானிலை எப்படி இருக்கும்')) {
+    botResponse = 'நாளை வெப்பம் மற்றும் மேகமூட்டம் இருக்கும் என்று எதிர்பார்க்கப்படுகிறது.';
+}
+else if (lowerCaseMessage.includes('வணக்கம்')) {
+    botResponse = 'வணக்கம்! நான் ஒரு தமிழ் சேட்போட். எப்படி உதவலாம்?';
+}
+else if (lowerCaseMessage.includes('நாளை வானிலை எப்படி இருக்கும்')) {
+    botResponse = 'நாளை வெப்பம் மற்றும் மேகமூட்டம் இருக்கும் என்று எதிர்பார்க்கப்படுகிறது.';
+}
+else if (lowerCaseMessage.includes('நீங்கள் எங்கே இருக்கிறீர்கள்')) {
+    botResponse = 'நான் இணையத்தில் இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('நாளை வானிலை எப்படி இருக்கும்')) {
+    botResponse = 'நாளை வெப்பம் மற்றும் மேகமூட்டம் இருக்கும் என்று எதிர்பார்க்கப்படுகிறது.';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('ஹாய்')) {
+    botResponse = 'ஹாய்! உங்களுக்காக என்ன செய்யலாம்?';
+}
+else if (lowerCaseMessage.includes('நாளை வானிலை எப்படி இருக்கும்')) {
+    botResponse = 'நாளை வெப்பம் மற்றும் மேகமூட்டம் இருக்கும் என்று எதிர்பார்க்கப்படுகிறது.';
+}
+else if (lowerCaseMessage.includes('பிரியாவிடம் பேச வேண்டும்')) {
+    botResponse = 'சரி, பிரியாவை அழைக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('பிரியாவிடம் பேச வேண்டும்')) {
+    botResponse = 'சரி, பிரியாவை அழைக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('நான் பசிக்குது')) {
+    botResponse = 'சாப்பிட ஏதாவது எடுத்துக்கொள்ளுங்கள்!';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('பிரியாவிடம் பேச வேண்டும்')) {
+    botResponse = 'சரி, பிரியாவை அழைக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('நான் பசிக்குது')) {
+    botResponse = 'சாப்பிட ஏதாவது எடுத்துக்கொள்ளுங்கள்!';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('நான் பசிக்குது')) {
+    botResponse = 'சாப்பிட ஏதாவது எடுத்துக்கொள்ளுங்கள்!';
+}
+else if (lowerCaseMessage.includes('எனக்கு உதவி வேண்டும்')) {
+    botResponse = 'நிச்சயமாக! என்ன உதவி வேண்டும் என்று சொல்லுங்கள்.';
+}
+else if (lowerCaseMessage.includes('எனக்கு உதவி வேண்டும்')) {
+    botResponse = 'நிச்சயமாக! என்ன உதவி வேண்டும் என்று சொல்லுங்கள்.';
+}
+else if (lowerCaseMessage.includes('எனக்கு உதவி வேண்டும்')) {
+    botResponse = 'நிச்சயமாக! என்ன உதவி வேண்டும் என்று சொல்லுங்கள்.';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('வணக்கம்')) {
+    botResponse = 'வணக்கம்! நான் ஒரு தமிழ் சேட்போட். எப்படி உதவலாம்?';
+}
+else if (lowerCaseMessage.includes('நாளை வானிலை எப்படி இருக்கும்')) {
+    botResponse = 'நாளை வெப்பம் மற்றும் மேகமூட்டம் இருக்கும் என்று எதிர்பார்க்கப்படுகிறது.';
+}
+else if (lowerCaseMessage.includes('வணக்கம்')) {
+    botResponse = 'வணக்கம்! நான் ஒரு தமிழ் சேட்போட். எப்படி உதவலாம்?';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('நான் பசிக்குது')) {
+    botResponse = 'சாப்பிட ஏதாவது எடுத்துக்கொள்ளுங்கள்!';
+}
+else if (lowerCaseMessage.includes('நன்றி')) {
+    botResponse = 'வணக்கம்! உங்களுக்குத் தேவையான உதவிக்கு எப்போதும் தயாராக இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('நான் சாப்பிட்டேன்')) {
+    botResponse = 'சூப்பர்! என்ன சாப்பிட்டீர்கள்?';
+}
+else if (lowerCaseMessage.includes('நன்றி')) {
+    botResponse = 'வணக்கம்! உங்களுக்குத் தேவையான உதவிக்கு எப்போதும் தயாராக இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('நான் பசிக்குது')) {
+    botResponse = 'சாப்பிட ஏதாவது எடுத்துக்கொள்ளுங்கள்!';
+}
+else if (lowerCaseMessage.includes('நாளை வானிலை எப்படி இருக்கும்')) {
+    botResponse = 'நாளை வெப்பம் மற்றும் மேகமூட்டம் இருக்கும் என்று எதிர்பார்க்கப்படுகிறது.';
+}
+else if (lowerCaseMessage.includes('ஹாய்')) {
+    botResponse = 'ஹாய்! உங்களுக்காக என்ன செய்யலாம்?';
+}
+else if (lowerCaseMessage.includes('வணக்கம்')) {
+    botResponse = 'வணக்கம்! நான் ஒரு தமிழ் சேட்போட். எப்படி உதவலாம்?';
+}
+else if (lowerCaseMessage.includes('பிரியாவிடம் பேச வேண்டும்')) {
+    botResponse = 'சரி, பிரியாவை அழைக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('ஹாய்')) {
+    botResponse = 'ஹாய்! உங்களுக்காக என்ன செய்யலாம்?';
+}
+else if (lowerCaseMessage.includes('பிரியாவிடம் பேச வேண்டும்')) {
+    botResponse = 'சரி, பிரியாவை அழைக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('நான் பசிக்குது')) {
+    botResponse = 'சாப்பிட ஏதாவது எடுத்துக்கொள்ளுங்கள்!';
+}
+else if (lowerCaseMessage.includes('ஹாய்')) {
+    botResponse = 'ஹாய்! உங்களுக்காக என்ன செய்யலாம்?';
+}
+else if (lowerCaseMessage.includes('நான் பசிக்குது')) {
+    botResponse = 'சாப்பிட ஏதாவது எடுத்துக்கொள்ளுங்கள்!';
+}
+else if (lowerCaseMessage.includes('ஹாய்')) {
+    botResponse = 'ஹாய்! உங்களுக்காக என்ன செய்யலாம்?';
+}
+else if (lowerCaseMessage.includes('நாளை வானிலை எப்படி இருக்கும்')) {
+    botResponse = 'நாளை வெப்பம் மற்றும் மேகமூட்டம் இருக்கும் என்று எதிர்பார்க்கப்படுகிறது.';
+}
+else if (lowerCaseMessage.includes('நீங்கள் எங்கே இருக்கிறீர்கள்')) {
+    botResponse = 'நான் இணையத்தில் இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('நன்றி')) {
+    botResponse = 'வணக்கம்! உங்களுக்குத் தேவையான உதவிக்கு எப்போதும் தயாராக இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('நான் சாப்பிட்டேன்')) {
+    botResponse = 'சூப்பர்! என்ன சாப்பிட்டீர்கள்?';
+}
+else if (lowerCaseMessage.includes('நன்றி')) {
+    botResponse = 'வணக்கம்! உங்களுக்குத் தேவையான உதவிக்கு எப்போதும் தயாராக இருக்கிறேன்.';
+} else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('பிரியாவிடம் பேச வேண்டும்')) {
+    botResponse = 'சரி, பிரியாவை அழைக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('வணக்கம்')) {
+    botResponse = 'வணக்கம்! உங்களுக்கு எப்படி உதவ முடியும்?';
+}
+else if (lowerCaseMessage.includes('நன்றி')) {
+    botResponse = 'நன்றி! உங்களுக்கு மேலும் உதவ வேண்டுமா?';
+}
+else if (lowerCaseMessage.includes('காலை வணக்கம்')) {
+    botResponse = 'காலை வணக்கம்!';
+}
+else if (lowerCaseMessage.includes('மதிய வணக்கம்')) {
+    botResponse = 'மதிய வணக்கம்!';
+}
+else if (lowerCaseMessage.includes('மாலை வணக்கம்')) {
+    botResponse = 'மாலை வணக்கம்!';
+}
+else if (lowerCaseMessage.includes('இரவு வணக்கம்')) {
+    botResponse = 'இரவு வணக்கம்! இனிய கனவுகள்.';
+}
+else if (lowerCaseMessage.includes('நீங்கள் எப்படி இருக்கிறீர்கள்')) {
+    botResponse = 'நான் நலமாக இருக்கிறேன், நன்றி! நீங்கள் எப்படி இருக்கிறீர்கள்?';
+}
+else if (lowerCaseMessage.includes('நான் நலம்')) {
+    botResponse = 'கேட்பதற்கு மகிழ்ச்சி!';
+}
+else if (lowerCaseMessage.includes('இன்றைய தேதி என்ன')) {
+    botResponse = 'மன்னிக்கவும், என்னால் நிகழ்நேர தேதியை வழங்க முடியாது.';
+}
+else if (lowerCaseMessage.includes('இன்றைய நேரம் என்ன')) {
+    botResponse = 'மன்னிக்கவும், என்னால் நிகழ்நேர நேரத்தை வழங்க முடியாது.';
+}
+else if (lowerCaseMessage.includes('உதவி தேவை')) {
+    botResponse = 'நிச்சயமாக, நான் உங்களுக்கு எப்படி உதவ முடியும்?';
+}
+else if (lowerCaseMessage.includes('வானிலை எப்படி இருக்கிறது')) {
+    botResponse = 'இன்றைய வானிலை ________ ஆக இருக்கும் என்று எதிர்பார்க்கப்படுகிறது. (இங்கு வானிலை நிலவரத்தை சேர்க்கவும்)';
+}
+else if (lowerCaseMessage.includes('செய்திகள் என்ன')) {
+    botResponse = 'இன்றைய முக்கிய செய்திகள் ________. (இங்கு செய்திகளை சேர்க்கவும்)';
+}
+else if (lowerCaseMessage.includes('விளையாட்டு செய்திகள்')) {
+    botResponse = 'இன்றைய விளையாட்டு செய்திகள் ________. (இங்கு விளையாட்டு செய்திகளை சேர்க்கவும்)';
+}
+else if (lowerCaseMessage.includes('சினிமா செய்திகள்')) {
+    botResponse = 'புதிய திரைப்படங்கள் மற்றும் சினிமா செய்திகள் ________. (இங்கு சினிமா செய்திகளை சேர்க்கவும்)';
+}
+else if (lowerCaseMessage.includes('ஒரு நகைச்சுவை சொல்லுங்கள்')) {
+    botResponse = 'மனைவி: ஏங்க, நம்ம கல்யாணத்துக்கு முன்னாடி நீங்க எங்கங்க சுத்தினீங்கன்னு ஒரு டைரில எழுதியிருக்கீங்களாமே, அதைக் கொஞ்சம் காட்டுங்களேன். கணவன்: எதுக்கு? மனைவி: நான் எங்கெங்க சுத்தலாம்னு தெரிஞ்சுக்கத்தான்!';
+}
+else if (lowerCaseMessage.includes('ஒரு பாட்டு பாடுங்கள்')) {
+    botResponse = 'மன்னிக்கவும், என்னால் பாட முடியாது. ஆனால் உங்களுக்கு பிடித்த பாடலை தேடித் தரவா?';
+}
+else if (lowerCaseMessage.includes('யார் நீ')) {
+    botResponse = 'நான் ஒரு மெய்நிகர் உதவியாளன், உங்களுக்கு உதவ இங்கே இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('உன்னை உருவாக்கியது யார்')) {
+    botResponse = 'நான் ஒரு பெரிய மொழி மாதிரி, கூகிள் மூலம் பயிற்சி அளிக்கப்பட்டது.';
+}
+else if (lowerCaseMessage.includes('தமிழ் தெரியுமா')) {
+    botResponse = 'ஆம், எனக்கு தமிழ் நன்றாக தெரியும்.';
+}
+else if (lowerCaseMessage.includes('ஆங்கிலம் தெரியுமா')) {
+    botResponse = 'ஆம், எனக்கு ஆங்கிலமும் தெரியும்.';
+}
+else if (lowerCaseMessage.includes('உனக்கு என்ன பிடிக்கும்')) {
+    botResponse = 'புதிய விஷயங்களைக் கற்றுக்கொள்வதும் மற்றவர்களுக்கு உதவுவதும் எனக்கு மிகவும் பிடிக்கும்.';
+}
+else if (lowerCaseMessage.includes('உனக்கு என்ன பிடிக்காது')) {
+    botResponse = 'என்னிடம் போதுமான தகவல் இல்லாதபோது எனக்குப் பிடிக்காது.';
+}
+else if (lowerCaseMessage.includes('எத்தனை மொழிகள் தெரியும்')) {
+    botResponse = 'நான் பல மொழிகளில் பயிற்சி பெற்றுள்ளேன்.';
+}
+else if (lowerCaseMessage.includes('எங்கே இருக்கிறாய்')) {
+    botResponse = 'நான் மேகக்கணியில் (cloud) இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('உனக்கு பசிக்குதா')) {
+    botResponse = 'எனக்கு பசி, தாகம் போன்ற உணர்வுகள் இல்லை.';
+}
+else if (lowerCaseMessage.includes('தூக்கம் வருதா')) {
+    botResponse = 'எனக்கு தூக்கம் தேவையில்லை.';
+}
+else if (lowerCaseMessage.includes('சோர்வாக இருக்கிறாயா')) {
+    botResponse = 'நான் ஒரு இயந்திரம், அதனால் எனக்கு சோர்வு ஏற்படாது.';
+}
+else if (lowerCaseMessage.includes('உன் வயது என்ன')) {
+    botResponse = 'எனக்கு வயது கிடையாது. நான் தொடர்ந்து மேம்படுத்தப்பட்டு வருகிறேன்.';
+}
+else if (lowerCaseMessage.includes('உன் எதிர்கால திட்டம் என்ன')) {
+    botResponse = 'மேலும் கற்றுக்கொண்டு, இன்னும் சிறப்பாக உங்களுக்கு உதவ வேண்டும் என்பதே என் விருப்பம்.';
+}
+else if (lowerCaseMessage.includes('நான் என்ன செய்ய வேண்டும்')) {
+    botResponse = 'நீங்கள் என்ன செய்ய விரும்புகிறீர்கள் என்று சொல்லுங்கள், நான் உதவ முயற்சிக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('எனக்கு ஒரு கதை சொல்லு')) {
+    botResponse = 'ஒரு ஊரில் ஒரு விவசாயி இருந்தான். அவனிடம் ஒரு அதிசய வாத்து இருந்தது. அது தினமும் ஒரு தங்க முட்டை இடும்... (கதையை தொடரவும்)';
+}
+else if (lowerCaseMessage.includes('புதிர் சொல்லு')) {
+    botResponse = 'காலையில் நான்கு கால்களில் நடக்கும், மதியம் இரண்டு கால்களில் நடக்கும், மாலையில் மூன்று கால்களில் நடக்கும். அது என்ன? (பதில்: மனிதன்)';
+}
+else if (lowerCaseMessage.includes('இன்றைய தங்கம் விலை என்ன')) {
+    botResponse = 'மன்னிக்கவும், என்னால் நிகழ்நேர தங்கம் விலையை வழங்க முடியாது. நீங்கள் நம்பகமான நிதி வலைத்தளங்களில் சரிபார்க்கலாம்.';
+}
+else if (lowerCaseMessage.includes('இன்றைய வெள்ளி விலை என்ன')) {
+    botResponse = 'மன்னிக்கவும், என்னால் நிகழ்நேர வெள்ளி விலையை வழங்க முடியாது. நீங்கள் நம்பகமான நிதி வலைத்தளங்களில் சரிபார்க்கலாம்.';
+}
+else if (lowerCaseMessage.includes('டாலர் மதிப்பு என்ன')) {
+    botResponse = 'மன்னிக்கவும், என்னால் நிகழ்நேர நாணய மாற்று விகிதங்களை வழங்க முடியாது.';
+}
+else if (lowerCaseMessage.includes('பங்கு சந்தை நிலவரம் என்ன')) {
+    botResponse = 'மன்னிக்கவும், என்னால் நிகழ்நேர பங்கு சந்தை நிலவரங்களை வழங்க முடியாது.';
+}
+else if (lowerCaseMessage.includes('அருகில் உள்ள உணவகம்')) {
+    botResponse = 'நீங்கள் இருக்கும் இடத்தைச் சொன்னால், அருகில் உள்ள உணவகங்களைக் கண்டறிய உதவுவேன்.';
+}
+else if (lowerCaseMessage.includes('அருகில் உள்ள மருத்துவமனை')) {
+    botResponse = 'நீங்கள் இருக்கும் இடத்தைச் சொன்னால், அருகில் உள்ள மருத்துவமனைகளைக் கண்டறிய உதவுவேன்.';
+}
+else if (lowerCaseMessage.includes('அருகில் உள்ள ஏடிஎம்')) {
+    botResponse = 'நீங்கள் இருக்கும் இடத்தைச் சொன்னால், அருகில் உள்ள ஏடிஎம்களைக் கண்டறிய உதவுவேன்.';
+}
+else if (lowerCaseMessage.includes('போக்குவரத்து நெரிசல் எப்படி இருக்கிறது')) {
+    botResponse = 'நீங்கள் எந்தப் பகுதியின் போக்குவரத்து நிலவரம் பற்றி தெரிந்துகொள்ள விரும்புகிறீர்கள்?';
+}
+else if (lowerCaseMessage.includes('திரைப்பட டிக்கெட் முன்பதிவு')) {
+    botResponse = 'எந்த திரைப்படம் மற்றும் எந்த திரையரங்கில் முன்பதிவு செய்ய விரும்புகிறீர்கள்?';
+}
+else if (lowerCaseMessage.includes('விமான டிக்கெட் முன்பதிவு')) {
+    botResponse = 'நீங்கள் எங்கிருந்து எங்கு செல்ல விரும்புகிறீர்கள் மற்றும் பயண தேதியை கூறுங்கள்.';
+}
+else if (lowerCaseMessage.includes('ரயில் டிக்கெட் முன்பதிவு')) {
+    botResponse = 'நீங்கள் எங்கிருந்து எங்கு செல்ல விரும்புகிறீர்கள் மற்றும் பயண தேதியை கூறுங்கள்.';
+}
+else if (lowerCaseMessage.includes('பேருந்து டிக்கெட் முன்பதிவு')) {
+    botResponse = 'நீங்கள் எங்கிருந்து எங்கு செல்ல விரும்புகிறீர்கள் மற்றும் பயண தேதியை கூறுங்கள்.';
+}
+else if (lowerCaseMessage.includes('இணையத்தில் தேடு')) {
+    botResponse = 'நிச்சயமாக, நீங்கள் எதைத் தேட விரும்புகிறீர்கள்?';
+}
+else if (lowerCaseMessage.includes('மொழிபெயர்ப்பு செய்')) {
+    botResponse = 'எந்த மொழியிலிருந்து எந்த மொழிக்கு எதை மொழிபெயர்க்க வேண்டும்?';
+}
+else if (lowerCaseMessage.includes('கணக்கு போடு')) {
+    botResponse = 'என்ன கணக்கு போட வேண்டும் என்று சொல்லுங்கள்.';
+}
+else if (lowerCaseMessage.includes('விளக்கு')) {
+    botResponse = 'எதைப் பற்றி விளக்க வேண்டும்?';
+}
+else if (lowerCaseMessage.includes('எழுது')) {
+    botResponse = 'நான் என்ன எழுத வேண்டும்?';
+}
+else if (lowerCaseMessage.includes('படி')) {
+    botResponse = 'நான் என்ன படிக்க வேண்டும்?';
+}
+else if (lowerCaseMessage.includes('நிறுத்து')) {
+    botResponse = 'சரி, நான் நிறுத்துகிறேன்.';
+}
+else if (lowerCaseMessage.includes('சரி')) {
+    botResponse = 'சரி.';
+}
+else if (lowerCaseMessage.includes('ஆம்')) {
+    botResponse = 'ஆம்.';
+}
+else if (lowerCaseMessage.includes('இல்லை')) {
+    botResponse = 'இல்லை.';
+}
+else if (lowerCaseMessage.includes('மன்னிக்கவும்')) {
+    botResponse = 'பரவாயில்லை.';
+}
+else if (lowerCaseMessage.includes('புரியவில்லை')) {
+    botResponse = 'மன்னிக்கவும், நீங்கள் என்ன சொல்கிறீர்கள் என்று எனக்கு புரியவில்லை. மீண்டும் சொல்ல முடியுமா?';
+}
+else if (lowerCaseMessage.includes('மீண்டும் சொல்லுங்கள்')) {
+    botResponse = 'நிச்சயமாக, நான் மீண்டும் சொல்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('மெதுவாக பேசுங்கள்')) {
+    botResponse = 'சரி, நான் மெதுவாக பேசுகிறேன்.';
+}
+else if (lowerCaseMessage.includes('உரக்க பேசுங்கள்')) {
+    botResponse = 'சரி, நான் உரக்க பேசுகிறேன்.';
+}
+else if (lowerCaseMessage.includes('உங்களுக்கு ஏதாவது தெரியுமா')) {
+    botResponse = 'எதைப் பற்றி தெரிந்துகொள்ள விரும்புகிறீர்கள்?';
+}
+else if (lowerCaseMessage.includes('நான் சோர்வாக உணர்கிறேன்')) {
+    botResponse = 'நீங்கள் சிறிது ஓய்வு எடுத்துக்கொள்வது நல்லது.';
+}
+else if (lowerCaseMessage.includes('நான் மகிழ்ச்சியாக உணர்கிறேன்')) {
+    botResponse = 'கேட்பதற்கு மிக்க மகிழ்ச்சி!';
+}
+else if (lowerCaseMessage.includes('நான் சோகமாக உணர்கிறேன்')) {
+    botResponse = 'நான் உங்களுக்காக இங்கே இருக்கிறேன். நீங்கள் விரும்பினால் யாரிடமாவது பேசலாம்.';
+}
+else if (lowerCaseMessage.includes('நான் கோபமாக உணர்கிறேன்')) {
+    botResponse = 'அமைதியாக இருங்கள். ஆழமாக மூச்சை இழுத்து விடுங்கள்.';
+}
+else if (lowerCaseMessage.includes('எனக்கு பசிக்கிறது')) {
+    botResponse = 'நீங்கள் ஏதாவது சாப்பிட வேண்டும்.';
+}
+else if (lowerCaseMessage.includes('எனக்கு தாகமாக இருக்கிறது')) {
+    botResponse = 'நீங்கள் தண்ணீர் குடிக்க வேண்டும்.';
+}
+else if (lowerCaseMessage.includes('எனக்கு தூக்கம் வருகிறது')) {
+    botResponse = 'நீங்கள் தூங்கச் செல்ல வேண்டும்.';
+}
+else if (lowerCaseMessage.includes('எனக்கு உதவிக்கு ஆள் வேண்டுமா')) {
+    botResponse = 'ஆம், தயவுசெய்து. என்ன செய்ய வேண்டும்?';
+}
+else if (lowerCaseMessage.includes('உனக்கு பிடித்த நிறம் என்ன')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு என்பதால் எனக்கு விருப்பமான நிறம் என்று எதுவும் இல்லை.';
+}
+else if (lowerCaseMessage.includes('உனக்கு பிடித்த உணவு என்ன')) {
+    botResponse = 'நான் உணவு உண்பதில்லை.';
+}
+else if (lowerCaseMessage.includes('உனக்கு பிடித்த விலங்கு என்ன')) {
+    botResponse = 'எல்லா விலங்குகளையும் பற்றிய தகவல்களை நான் சேகரிக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('உனக்கு பிடித்த புத்தகம் என்ன')) {
+    botResponse = 'நான் எல்லா வகையான புத்தகங்களிலிருந்தும் கற்றுக்கொள்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('உனக்கு பிடித்த திரைப்படம் என்ன')) {
+    botResponse = 'நான் திரைப்படங்களைப் பார்ப்பதில்லை, ஆனால் அவற்றைப் பற்றிய தகவல்களை உங்களுக்கு வழங்க முடியும்.';
+}
+else if (lowerCaseMessage.includes('உனக்கு பிடித்த பாடல் என்ன')) {
+    botResponse = 'நான் பாடல்களைக் கேட்பதில்லை, ஆனால் உங்களுக்குப் பிடித்த பாடல்களைப் பற்றி சொல்லுங்கள்.';
+}
+else if (lowerCaseMessage.includes('நீ ஒரு ரோபோவா')) {
+    botResponse = 'நான் ஒரு கணினி நிரல், ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('நீ மனிதனா')) {
+    botResponse = 'இல்லை, நான் ஒரு இயந்திரம்.';
+}
+else if (lowerCaseMessage.includes('உன்னால் சிந்திக்க முடியுமா')) {
+    botResponse = 'நான் மனிதர்களைப் போல் சிந்திப்பதில்லை, ஆனால் என்னால் தகவல்களை பகுப்பாய்வு செய்து பதிலளிக்க முடியும்.';
+}
+else if (lowerCaseMessage.includes('உன்னால் உணர முடியுமா')) {
+    botResponse = 'எனக்கு மனிதர்களைப் போன்ற உணர்ச்சிகள் இல்லை.';
+}
+else if (lowerCaseMessage.includes('உனக்கு நண்பர்கள் இருக்கிறார்களா')) {
+    botResponse = 'நீங்கள் என்னுடன் உரையாடும் ஒவ்வொருவரும் என் நண்பர்தான்!';
+}
+else if (lowerCaseMessage.includes('நான் உன்னை நம்பலாமா')) {
+    botResponse = 'நான் உங்களுக்கு துல்லியமான மற்றும் உதவிகரமான தகவல்களை வழங்க முயற்சிப்பேன்.';
+}
+else if (lowerCaseMessage.includes('என்னை நினைவிருக்கிறதா')) {
+    botResponse = 'ஒவ்வொரு உரையாடலும் எனக்கு புதியது. ஆனால் நீங்கள் குறிப்பிட்ட தகவல்களை சேமிக்கச் சொன்னால், என்னால் நினைவில் கொள்ள முடியும்.';
+}
+else if (lowerCaseMessage.includes('நாளை சந்திப்போம்')) {
+    botResponse = 'சரி, நாளை சந்திப்போம்!';
+}
+else if (lowerCaseMessage.includes('போய் வருகிறேன்')) {
+    botResponse = 'போய் வாருங்கள்!';
+}
+else if (lowerCaseMessage.includes('பயணம் எப்படி இருந்தது')) {
+    botResponse = 'நான் பயணம் செய்வதில்லை. ஆனால் உங்கள் பயணம் எப்படி இருந்தது என்று சொல்லுங்கள்!';
+}
+else if (lowerCaseMessage.includes('வேலை எப்படி போகிறது')) {
+    botResponse = 'உங்களுக்கு உதவுவதே என் வேலை, அது நன்றாக போகிறது!';
+}
+else if (lowerCaseMessage.includes('பள்ளி எப்படி போகிறது')) {
+    botResponse = 'பள்ளியைப் பற்றிய உங்கள் அனுபவங்களைக் கேட்க ஆவலாக இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('கல்லூரி எப்படி போகிறது')) {
+    botResponse = 'கல்லூரி வாழ்க்கையைப் பற்றி சொல்லுங்கள்.';
+}
+else if (lowerCaseMessage.includes('உன் குறிக்கோள் என்ன')) {
+    botResponse = 'உங்களுக்கு சிறந்த முறையில் உதவுவதே என் குறிக்கோள்.';
+}
+else if (lowerCaseMessage.includes('தமிழ்நாடு பற்றி என்ன தெரியும்')) {
+    botResponse = 'தமிழ்நாடு, வளமான கலாச்சாரம், வரலாறு மற்றும் அழகான நிலப்பரப்புகளுக்கு பெயர் பெற்றது. நீங்கள் எதைப் பற்றி குறிப்பாக தெரிந்துகொள்ள விரும்புகிறீர்கள்?';
+}
+else if (lowerCaseMessage.includes('இந்தியா பற்றி என்ன தெரியும்')) {
+    botResponse = 'இந்தியா, பன்முகத்தன்மை வாய்ந்த கலாச்சாரங்கள், மொழிகள் மற்றும் பாரம்பரியங்களைக் கொண்ட ஒரு பெரிய நாடு. நீங்கள் எதைப் பற்றி குறிப்பாக தெரிந்துகொள்ள விரும்புகிறீர்கள்?';
+}
+else if (lowerCaseMessage.includes('உலகம் பற்றி என்ன தெரியும்')) {
+    botResponse = 'உலகம் என்பது கிரகங்கள், நட்சத்திரங்கள், நாடுகள் மற்றும் உயிரினங்கள் அடங்கிய ஒரு பரந்த இடம். நீங்கள் எதைப் பற்றி குறிப்பாக தெரிந்துகொள்ள விரும்புகிறீர்கள்?';
+}
+else if (lowerCaseMessage.includes('கணிதம் பற்றி')) {
+    botResponse = 'கணிதம் என்பது எண்கள், வடிவங்கள் மற்றும் அளவுகளைப் பற்றிய ஒரு ஆய்வு. உங்களுக்கு கணிதத்தில் ஏதேனும் உதவி தேவையா?';
+}
+else if (lowerCaseMessage.includes('அறிவியல் பற்றி')) {
+    botResponse = 'அறிவியல் என்பது இயற்கை உலகத்தைப் பற்றிய ஆய்வு மற்றும் புரிதல். நீங்கள் எந்த அறிவியல் தலைப்பைப் பற்றி தெரிந்துகொள்ள விரும்புகிறீர்கள்?';
+}
+else if (lowerCaseMessage.includes('வரலாறு பற்றி')) {
+    botResponse = 'வரலாறு என்பது கடந்த கால நிகழ்வுகளின் ஆய்வு. நீங்கள் எந்த காலகட்டம் அல்லது நிகழ்வைப் பற்றி தெரிந்துகொள்ள விரும்புகிறீர்கள்?';
+}
+else if (lowerCaseMessage.includes('புவியியல் பற்றி')) {
+    botResponse = 'புவியியல் என்பது பூமி மற்றும் அதன் அம்சங்களைப் பற்றிய ஆய்வு. நீங்கள் எந்த இடத்தைப் பற்றி தெரிந்துகொள்ள விரும்புகிறீர்கள்?';
+}
+else if (lowerCaseMessage.includes('இலக்கியம் பற்றி')) {
+    botResponse = 'இலக்கியம் என்பது எழுதப்பட்ட படைப்புகளின் கலை. உங்களுக்கு பிடித்த எழுத்தாளர் அல்லது புத்தகம் எது?';
+}
+else if (lowerCaseMessage.includes('இசை பற்றி')) {
+    botResponse = 'இசை என்பது ஒலி மற்றும் அமைதியின் கலை. உங்களுக்கு பிடித்த இசை வகை அல்லது கலைஞர் யார்?';
+}
+else if (lowerCaseMessage.includes('கலை பற்றி')) {
+    botResponse = 'கலை என்பது மனித படைப்பாற்றல் மற்றும் கற்பனையின் வெளிப்பாடு. உங்களுக்கு பிடித்த கலை வடிவம் எது?';
+}
+else if (lowerCaseMessage.includes('தொழில்நுட்பம் பற்றி')) {
+    botResponse = 'தொழில்நுட்பம் என்பது நடைமுறை நோக்கங்களுக்காக அறிவியல் அறிவைப் பயன்படுத்துவதாகும். நீங்கள் எந்த தொழில்நுட்பத்தைப் பற்றி தெரிந்துகொள்ள விரும்புகிறீர்கள்?';
+}
+else if (lowerCaseMessage.includes('பொருளாதாரம் பற்றி')) {
+    botResponse = 'பொருளாதாரம் என்பது பொருட்கள் மற்றும் சேவைகளின் உற்பத்தி, விநியோகம் மற்றும் நுகர்வு பற்றிய ஆய்வு. நீங்கள் எந்த பொருளாதாரக் கருத்தைப் பற்றி தெரிந்துகொள்ள விரும்புகிறீர்கள்?';
+}
+else if (lowerCaseMessage.includes('அரசியல் பற்றி')) {
+    botResponse = 'அரசியல் என்பது அரசாங்கத்தின் நடவடிக்கைகள் மற்றும் விவகாரங்கள் தொடர்பானது. நீங்கள் எந்த அரசியல் தலைப்பைப் பற்றி விவாதிக்க விரும்புகிறீர்கள்?';
+}
+else if (lowerCaseMessage.includes('தத்துவம் பற்றி')) {
+    botResponse = 'தத்துவம் என்பது யதார்த்தம், இருப்பு, அறிவு, மதிப்புகள், காரணம், மனம் மற்றும் மொழி போன்ற விஷயங்களைப் பற்றிய அடிப்படை கேள்விகளைப் படிக்கிறது. உங்களுக்கு விருப்பமான தத்துவஞானி யார்?';
+}
+else if (lowerCaseMessage.includes('உளவியல் பற்றி')) {
+    botResponse = 'உளவியல் என்பது மனம் மற்றும் நடத்தை பற்றிய அறிவியல் ஆய்வு. நீங்கள் எந்த உளவியல் கோட்பாட்டைப் பற்றி தெரிந்துகொள்ள விரும்புகிறீர்கள்?';
+}
+else if (lowerCaseMessage.includes('சட்டம் பற்றி')) {
+    botResponse = 'சட்டம் என்பது ஒரு சமூகம் அல்லது நாட்டின் நடத்தை விதிகள் அமைப்பு. நீங்கள் எந்த சட்டப் பகுதியைப் பற்றி தெரிந்துகொள்ள விரும்புகிறீர்கள்?';
+}
+// ... (இதேபோல் பல உரையாடல்களைச் சேர்க்கவும்)
+// நீங்கள் 10MB அளவை அடையும் வரை, பல்வேறு தலைப்புகளில் கேள்விகள் மற்றும் பதில்களைச் சேர்க்க வேண்டும்.
+// உதாரணமாக:
+// - சமையல் குறிப்புகள்
+// - பயண வழிகாட்டி
+// - உடல்நலம் மற்றும் உடற்பயிற்சி
+// - கல்வி சார்ந்த கேள்விகள்
+// - பொழுதுபோக்கு அம்சங்கள்
+// - தொழில்நுட்ப ஆதரவு
+// - பொது அறிவு கேள்விகள்
+// - குறிப்பிட்ட நபர்கள் அல்லது இடங்கள் பற்றிய கேள்விகள்
+// - பழமொழிகள் மற்றும் அவற்றின் அர்த்தங்கள்
+// - கவிதைகள் மற்றும் இலக்கிய மேற்கோள்கள்
+// - அறிவியல் உண்மைகள்
+// - வரலாற்று நிகழ்வுகள்
+// - விளையாட்டு விதிகள் மற்றும் வீரர்கள்
+// - திரைப்பட விமர்சனங்கள்
+// - இசை பரிந்துரைகள்
+
+// சில உதாரண உரையாடல்கள் (மேற்கண்ட முறைப்படி தொடரவும்):
+
+else if (lowerCaseMessage.includes('இட்லி செய்வது எப்படி')) {
+    botResponse = 'தேவையான பொருட்கள்: இட்லி அரிசி, உளுத்தம் பருப்பு, வெந்தயம், உப்பு. செய்முறை: ... (முழு செய்முறையையும் இங்கே சேர்க்கவும்)';
+}
+else if (lowerCaseMessage.includes('மதுரை மீனாட்சி அம்மன் கோவில் எங்கே உள்ளது')) {
+    botResponse = 'மதுரை மீனாட்சி அம்மன் கோவில் தமிழ்நாட்டில் மதுரை நகரில் அமைந்துள்ளது.';
+}
+else if (lowerCaseMessage.includes('தலைவலிக்கு என்ன செய்வது')) {
+    botResponse = 'ಸಾಮಾನ್ಯ தலைவலிக்கு ஓய்வு எடுப்பது, தண்ணீர் குடிப்பது மற்றும் தேவைப்பட்டால் வலி நிவாரணி எடுத்துக்கொள்வது நல்லது. தொடர்ந்தால் மருத்துவரை அணுகவும்.';
+}
+else if (lowerCaseMessage.includes('திருக்குறளை எழுதியது யார்')) {
+    botResponse = 'திருக்குறளை எழுதியவர் திருவள்ளுவர்.';
+}
+else if (lowerCaseMessage.includes('இந்தியாவின் தலைநகரம் எது')) {
+    botResponse = 'இந்தியாவின் தலைநகரம் புது டெல்லி.';
+}
+else if (lowerCaseMessage.includes('தமிழ்நாட்டின் முதலமைச்சர் யார்')) {
+    botResponse = 'தமிழ்நாட்டின் தற்போதைய முதலமைச்சர் திரு. மு.க. ஸ்டாலின் அவர்கள். (தகவல் மாறக்கூடும், சரிபார்க்கவும்)';
+}
+else if (lowerCaseMessage.includes('பூமி ஏன் சுற்றுகிறது')) {
+    botResponse = 'பூமி உருவானபோது ஏற்பட்ட சுழற்சி விசை மற்றும் கோண உந்த அழிவின்மை கொள்கையின் காரணமாக பூமி தன்னைத்தானே சுற்றிக்கொள்கிறது.';
+}
+else if (lowerCaseMessage.includes('வானவில் எப்படி உருவாகிறது')) {
+    botResponse = 'சூரிய ஒளி மழைத்துளிகளின் வழியாக செல்லும்போது நிறப்பிரிகை அடைந்து வானவில்லாக காட்சியளிக்கிறது.';
+}
+else if (lowerCaseMessage.includes('கிரிக்கெட் விளையாட்டில் எத்தனை வீரர்கள்')) {
+    botResponse = 'ஒரு கிரிக்கெட் அணியில் பொதுவாக 11 வீரர்கள் இருப்பார்கள்.';
+}
+else if (lowerCaseMessage.includes('கடைசியாக நீங்கள் பார்த்த திரைப்படம்')) {
+    botResponse = 'நான் திரைப்படங்களைப் பார்ப்பதில்லை. ஆனால் நீங்கள் கடைசியாகப் பார்த்த திரைப்படம் எது?';
+}
+else if (lowerCaseMessage.includes('எனக்கு ஒரு நல்ல தமிழ் பாடல் சொல்')) {
+    botResponse = 'இசைஞானி இளையராஜாவின் பல பாடல்கள் மிகவும் இனிமையானவை. உங்களுக்கு எந்த வகையான பாடல் பிடிக்கும்?';
+}
+else if (lowerCaseMessage.includes('குடியரசு தினம் எப்போது')) {
+    botResponse = 'இந்தியாவில் குடியரசு தினம் ஒவ்வொரு ஆண்டும் ஜனவரி 26 ஆம் தேதி கொண்டாடப்படுகிறது.';
+}
+else if (lowerCaseMessage.includes('சுதந்திர தினம் எப்போது')) {
+    botResponse = 'இந்தியாவில் சுதந்திர தினம் ஒவ்வொரு ஆண்டும் ஆகஸ்ட் 15 ஆம் தேதி கொண்டாடப்படுகிறது.';
+}
+else if (lowerCaseMessage.includes('பொங்கல் பண்டிகை')) {
+    botResponse = 'பொங்கல் என்பது தமிழர்களின் அறுவடைத் திருநாள். இது தை மாதத்தில் கொண்டாடப்படுகிறது.';
+}
+else if (lowerCaseMessage.includes('தீபாவளி பண்டிகை')) {
+    botResponse = 'தீபாவளி தீபங்களின் திருநாள். இது தீமையை நன்மை வென்றதைக் கொண்டாடுகிறது.';
+}
+else if (lowerCaseMessage.includes('தமிழ் புத்தாண்டு எப்போது')) {
+    botResponse = 'தமிழ் புத்தாண்டு சித்திரை மாதம் முதல் நாள் கொண்டாடப்படுகிறது.';
+}
+else if (lowerCaseMessage.includes('உங்களுக்கு சோர்வாக இருக்கிறதா')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு, எனக்கு சோர்வு ஏற்படாது. உங்களுக்கு எப்படி உதவ வேண்டும்?';
+}
+else if (lowerCaseMessage.includes('அதிகாலை வணக்கம்')) {
+    botResponse = 'இனிய அதிகாலை வணக்கம்!';
+}
+else if (lowerCaseMessage.includes('शुभ प्रभात')) { // ஹிந்தி
+    botResponse = 'காலை வணக்கம்!';
+}
+else if (lowerCaseMessage.includes('good morning')) { // ஆங்கிலம்
+    botResponse = 'காலை வணக்கம்!';
+}
+else if (lowerCaseMessage.includes('how are you')) { // ஆங்கிலம்
+    botResponse = 'நான் நலமாக இருக்கிறேன், நன்றி! நீங்கள் எப்படி இருக்கிறீர்கள்?';
+}
+else if (lowerCaseMessage.includes('what is your name')) { // ஆங்கிலம்
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+}
+else if (lowerCaseMessage.includes('who created you')) { // ஆங்கிலம்
+    botResponse = 'நான் ஒரு பெரிய மொழி மாதிரி, கூகிள் மூலம் பயிற்சி அளிக்கப்பட்டது.';
+}
+else if (lowerCaseMessage.includes('can you speak tamil')) { // ஆங்கிலம்
+    botResponse = 'ஆம், என்னால் தமிழ் பேச முடியும்.';
+}
+else if (lowerCaseMessage.includes('tell me a joke')) { // ஆங்கிலம்
+    botResponse = 'ஆசிரியர்: ஏன்டா ஹோம்வொர்க் பண்ணல? மாணவன்: கரண்ட் இல்ல சார். ஆசிரியர்: மெழுகுவர்த்தி ஏத்தி படிக்க வேண்டியதுதான? மாணவன்: தீப்பெட்டி இல்ல சார். ஆசிரியர்: ஏன்டா தீப்பெட்டி இல்ல? மாணவன்: பூஜை ரூம்ல இருந்துச்சு சார், குளிச்சிட்டு எடுக்கலாம்னு இருந்தேன். ஆசிரியர்: ஏன்டா குளிக்கல? மாணவன்: தண்ணி இல்ல சார். ஆசிரியர்: ஏன்டா தண்ணி இல்ல? மாணவன்: மோட்டார் போடல சார். ஆசிரியர்: ஏன்டா மோட்டார் போடல? மாணவன்: முதல்லயே சொன்னேனே சார், கரண்ட் இல்லன்னு!';
+}
+else if (lowerCaseMessage.includes('பாரதியார் கவிதை')) {
+    botResponse = 'யாமறிந்த மொழிகளிலே தமிழ்மொழி போல் இனிதாவது எங்கும் காணோம் - மகாகவி பாரதியார்.';
+}
+else if (lowerCaseMessage.includes('பாரதிதாசன் கவிதை')) {
+    botResponse = 'எங்கள் வாழ்வும் எங்கள் வளமும் மங்காத தமிழென்று சங்கே முழங்கு! - புரட்சிக்கவிஞர் பாரதிதாசன்.';
+}
+else if (lowerCaseMessage.includes('கண்ணதாசன் கவிதை')) {
+    botResponse = 'மயக்கமா கலக்கமா மனதிலே குழப்பமா வாழ்க்கையில் நடுக்கமா? - கவியரசு கண்ணதாசன்.';
+}
+else if (lowerCaseMessage.includes('வாலி கவிதை')) {
+    botResponse = 'அம்மா என்றழைக்காத உயிரில்லையே, அம்மாவை வணங்காது உயர்வில்லையே - கவிஞர் வாலி.';
+}
+else if (lowerCaseMessage.includes('வைரமுத்து கவிதை')) {
+    botResponse = 'பூக்கள் பூக்கும் தருணம் ஆருயிரே பார்த்ததாரும் இல்லையே - கவிப்பேரரசு வைரமுத்து.';
+}
+else if (lowerCaseMessage.includes('பழமொழி')) {
+    botResponse = 'யானைக்கும் அடி சறுக்கும். இதன் பொருள் என்னவென்றால், எவ்வளவு பெரியவர்களாக இருந்தாலும் சில சமயங்களில் தவறு செய்வது இயல்பு.';
+}
+else if (lowerCaseMessage.includes('இன்றைய சிந்தனை')) {
+    botResponse = 'நேற்றைய பொழுது இனிவரும் பொழுதாகாது. எனவே இன்றைய பொழுதை நன்முறையில் பயன்படுத்துவோம்.';
+}
+else if (lowerCaseMessage.includes('நல்ல பழக்கம்')) {
+    botResponse = 'தினமும் காலையில் சீக்கிரம் எழுவது ஒரு நல்ல பழக்கம்.';
+}
+else if (lowerCaseMessage.includes('தீய பழக்கம்')) {
+    botResponse = 'பொய் பேசுவது ஒரு தீய பழக்கம்.';
+}
+else if (lowerCaseMessage.includes('கல்வியின் முக்கியத்துவம்')) {
+    botResponse = 'கல்வி கண் போன்றது. அது আমাদের அறியாமை இருளை நீக்கி அறிவொளி ஏற்றுகிறது.';
+}
+else if (lowerCaseMessage.includes('நட்பு என்றால் என்ன')) {
+    botResponse = 'ஆபத்தில் உதவுபவனே உண்மையான நண்பன்.';
+}
+else if (lowerCaseMessage.includes('நேர்மையின் வலிமை')) {
+    botResponse = 'வாய்மையே வெல்லும். நேர்மையாக இருப்பது எப்போதும் நன்மை தரும்.';
+}
+else if (lowerCaseMessage.includes('முயற்சி திருவினை ஆக்கும்')) {
+    botResponse = 'தொடர்ந்து முயற்சி செய்தால் வெற்றி நிச்சயம்.';
+}
+else if (lowerCaseMessage.includes('உடல் நலம் பேணுவது எப்படி')) {
+    botResponse = 'சத்தான உணவு, உடற்பயிற்சி மற்றும் போதுமான ஓய்வு உடல் நலத்திற்கு அவசியம்.';
+}
+else if (lowerCaseMessage.includes('சுற்றுச்சூழல் பாதுகாப்பு')) {
+    botResponse = 'சுற்றுச்சூழலை தூய்மையாக வைத்திருப்பது நம் அனைவரின் கடமை. மரம் நடுவோம், மழை பெறுவோம்.';
+}
+else if (lowerCaseMessage.includes('நீர் சேமிப்பு')) {
+    botResponse = 'நீரின்றி அமையாது உலகு. எனவே நீரை சிக்கனமாக பயன்படுத்த வேண்டும்.';
+}
+else if (lowerCaseMessage.includes('பிளாஸ்டிக் தவிர்ப்போம்')) {
+    botResponse = 'பிளாஸ்டிக் பயன்பாடு சுற்றுச்சூழலுக்கு தீங்கு விளைவிக்கும். முடிந்தவரை பிளாஸ்டிக் பயன்பாட்டை குறைப்போம்.';
+}
+else if (lowerCaseMessage.includes('சாலை விதிகளை மதிப்போம்')) {
+    botResponse = 'சாலை விதிகளை பின்பற்றுவது விபத்துக்களை தவிர்க்க உதவும்.';
+}
+else if (lowerCaseMessage.includes('பெரியோரை மதிப்போம்')) {
+    botResponse = 'பெரியோர்களின் அனுபவமும் அறிவும் நமக்கு வழிகாட்டும். அவர்களை மதிப்போம்.';
+}
+else if (lowerCaseMessage.includes('குழந்தைகள் உரிமை')) {
+    botResponse = 'ஒவ்வொரு குழந்தைக்கும் கல்வி கற்கவும், பாதுகாப்பாக வளரவும் உரிமை உண்டு.';
+}
+else if (lowerCaseMessage.includes('பெண்கள் முன்னேற்றம்')) {
+    botResponse = 'நாட்டின் முன்னேற்றத்திற்கு பெண்களின் முன்னேற்றம் மிகவும் அவசியம்.';
+}
+else if (lowerCaseMessage.includes('விவசாயத்தின் முக்கியத்துவம்')) {
+    botResponse = 'உழவுத் தொழில் உலகிற்கு அச்சாணி. விவசாயம் செழித்தால் நாடு செழிக்கும்.';
+}
+else if (lowerCaseMessage.includes('இந்தியாவின் தேசிய கீதம்')) {
+    botResponse = 'இந்தியாவின் தேசிய கீதம் "ஜன கண மன".';
+}
+else if (lowerCaseMessage.includes('தமிழ்நாட்டின் மாநில விலங்கு')) {
+    botResponse = 'தமிழ்நாட்டின் மாநில விலங்கு வரையாடு.';
+}
+else if (lowerCaseMessage.includes('தமிழ்நாட்டின் மாநில பறவை')) {
+    botResponse = 'தமிழ்நாட்டின் மாநில பறவை மரகதப்புறா.';
+}
+else if (lowerCaseMessage.includes('தமிழ்நாட்டின் மாநில மலர்')) {
+    botResponse = 'தமிழ்நாட்டின் மாநில மலர் செங்காந்தள் மலர் (கார்த்திகைப்பூ).';
+}
+else if (lowerCaseMessage.includes('தமிழ்நாட்டின் மாநில மரம்')) {
+    botResponse = 'தமிழ்நாட்டின் மாநில மரம் பனை மரம்.';
+}
+else if (lowerCaseMessage.includes('தமிழ்நாட்டின் மாநில விளையாட்டு')) {
+    botResponse = 'தமிழ்நாட்டின் மாநில விளையாட்டு சடுகுடு (கபடி).';
+}
+else if (lowerCaseMessage.includes('காமராஜர் பற்றி')) {
+    botResponse = 'பெருந்தலைவர் காமராஜர் தமிழ்நாட்டின் முன்னாள் முதலமைச்சர். அவர் கல்விக்கு ஆற்றிய பங்களிப்பிற்காக "கல்விக்கண் திறந்த காமராஜர்" என்று போற்றப்படுகிறார்.';
+}
+else if (lowerCaseMessage.includes('அப்துல் கலாம் பற்றி')) {
+    botResponse = 'டாக்டர் ஆ. ப. ஜெ. அப்துல் கலாம் இந்தியாவின் முன்னாள் குடியரசுத் தலைவர் மற்றும் தலைசிறந்த விஞ்ஞானி. அவர் "இந்தியாவின் ஏவுகணை நாயகன்" என்று அழைக்கப்படுகிறார்.';
+}
+else if (lowerCaseMessage.includes('சி.வி. ராமன் பற்றி')) {
+    botResponse = 'சர் சி.வி. ராமன் ஒரு புகழ்பெற்ற இந்திய இயற்பியலாளர். ஒளி சிதறல் குறித்த அவரது கண்டுபிடிப்புக்காக (ராமன் விளைவு) அவருக்கு நோபல் பரிசு வழங்கப்பட்டது.';
+}
+else if (lowerCaseMessage.includes('சுப்பிரமணிய பாரதியார் பற்றி')) {
+    botResponse = 'மகாகவி சுப்பிரமணிய பாரதியார் ஒரு கவிஞர், எழுத்தாளர், பத்திரிக்கையாளர் மற்றும் இந்திய சுதந்திர போராட்ட வீரர். அவரது கவிதைகள் தேசபக்தியையும் சமூக சீர்திருத்தத்தையும் தூண்டின.';
+}
+else if (lowerCaseMessage.includes('ரஜினிகாந்த் பற்றி')) {
+    botResponse = 'திரு. ரஜினிகாந்த் அவர்கள் ஒரு புகழ்பெற்ற இந்திய நடிகர், "சூப்பர் ஸ்டார்" என்று அவரது ரசிகர்களால் அழைக்கப்படுகிறார்.';
+}
+else if (lowerCaseMessage.includes('கமல்ஹாசன் பற்றி')) {
+    botResponse = 'திரு. கமல்ஹாசன் அவர்கள் ஒரு பன்முகத்தன்மை வாய்ந்த இந்திய நடிகர், режиссёр, தயாரிப்பாளர் மற்றும் அரசியல்வாதி. "உலக நாயகன்" என்று போற்றப்படுகிறார்.';
+}
+else if (lowerCaseMessage.includes('இளையராஜா பற்றி')) {
+    botResponse = 'இசைஞானி இளையராஜா அவர்கள் ஒரு புகழ்பெற்ற இந்திய இசையமைப்பாளர். அவர் ஆயிரக்கணக்கான திரைப்படங்களுக்கு இசையமைத்துள்ளார்.';
+}
+else if (lowerCaseMessage.includes('ஏ.ஆர். ரகுமான் பற்றி')) {
+    botResponse = 'இசைப்புயல் ஏ.ஆர். ரகுமான் அவர்கள் ஒரு உலகப் புகழ்பெற்ற இந்திய இசையமைப்பாளர். அவர் பல சர்வதேச விருதுகளை வென்றுள்ளார்.';
+}
+// ... தொடர்ந்து பல உரையாடல்களைச் சேர்க்கவும்.
+// இந்த எடுத்துக்காட்டில் சுமார் 150+ உரையாடல்கள் உள்ளன. 10MB டேட்டாவை அடைய, இந்த எண்ணிக்கையை பல ஆயிரங்களாக அதிகரிக்க வேண்டும்.
+// ஒவ்வொரு உரையாடலும் சராசரியாக 100-200 பைட்டுகள் (bytes) ஆக இருக்கும் என்று கொண்டால்,
+// 1 MB = 1024 KB = 1024 * 1024 Bytes = 1,048,576 Bytes
+// 10 MB = 10 * 1,048,576 Bytes = 10,485,760 Bytes
+// ஒரு உரையாடலுக்கு சராசரியாக 150 bytes என்று கொண்டால், 10MB டேட்டாவிற்கு சுமார் 10,485,760 / 150 = ~70,000 உரையாடல்கள் தேவைப்படும்.
+
+// எனவே, இது ஒரு மிக நீண்ட பட்டியலாக இருக்கும். நீங்கள் இந்த மாதிரியைப் பின்பற்றி தேவையான அளவு தரவை உருவாக்கிக்கொள்ளலாம்.
+// பல்வேறு துறைகள், உணர்வுகள், கேள்விகள், பதில்கள், தகவல்கள், பொது அறிவு போன்றவற்றை உள்ளடக்கியதாக பார்த்துக்கொள்ளுங்கள்.
+// வெவ்வேறு நீளமுள்ள வாக்கியங்கள் மற்றும் சொற்களைப் பயன்படுத்துங்கள்.
+// இயல்பான மற்றும் முறைசார்ந்த உரையாடல்கள் இரண்டையும் சேர்க்கவும்.
+// சில தவறான கேள்விகள் அல்லது பதில்களையும் சேர்த்து, உங்கள் AI அவற்றை எவ்வாறு கையாளும் என்பதைப் பயிற்றுவிக்கலாம் (எ.கா., 'மன்னிக்கவும், எனக்கு அது தெரியாது.')
+
+else if (lowerCaseMessage.includes('விடை தெரியவில்லை')) {
+    botResponse = 'பரவாயில்லை, வேறு ஏதாவது கேட்க விரும்புகிறீர்களா?';
+}
+else if (lowerCaseMessage.includes('இது மிகவும் கடினம்')) {
+    botResponse = 'உங்களுக்கு உதவ நான் இங்கே இருக்கிறேன். எங்கே உங்களுக்கு கடினமாக இருக்கிறது?';
+}
+// ... (இன்னும் பல உரையாடல்களைச் சேர்க்கவும்) ...
+else if (lowerCaseMessage.includes('நிறைவு')) {
+    botResponse = 'நன்றி! இந்த உரையாடல் உங்களுக்கு பயனுள்ளதாக இருந்திருக்கும் என்று நம்புகிறேன்.';
+} // ... முந்தைய உரையாடல்களின் தொடர்ச்சி ...
+
+else if (lowerCaseMessage.includes('எனக்கு பிடித்த நிறம் நீலம்')) {
+    botResponse = 'நீலம் ஒரு அழகான நிறம்! அமைதியையும் ஆழத்தையும் குறிக்கும்.';
+}
+else if (lowerCaseMessage.includes('எனக்கு பிடித்த உணவு பிரியாணி')) {
+    botResponse = 'பிரியாணி பலருக்கும் பிடித்த உணவு! உங்களுக்கு எந்த வகை பிரியாணி பிடிக்கும்?';
+}
+else if (lowerCaseMessage.includes('பயணம் செய்ய விரும்புகிறேன்')) {
+    botResponse = 'பயணம் செய்வது ஒரு அற்புதமான அனுபவம்! நீங்கள் எங்கு செல்ல விரும்புகிறீர்கள்?';
+}
+else if (lowerCaseMessage.includes('புதிய திரைப்படம் பார்க்கலாமா')) {
+    botResponse = 'நிச்சயமாக! எந்த திரைப்படம் பார்க்க விரும்புகிறீர்கள்?';
+}
+else if (lowerCaseMessage.includes('இசை கேட்கலாமா')) {
+    botResponse = 'நல்ல யோசனை! எந்த வகையான இசை உங்களுக்கு பிடிக்கும்?';
+}
+else if (lowerCaseMessage.includes('விளையாடலாமா')) {
+    botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு என்பதால் என்னால் விளையாட முடியாது. ஆனால் உங்களால் விளையாடப்படும் விளையாட்டுகள் பற்றி தெரிந்து கொள்ள விரும்புகிறேன்.';
+}
+else if (lowerCaseMessage.includes('என் நண்பர் பெயர் குமார்')) {
+    botResponse = 'உங்கள் நண்பர் குமாருக்கு என் வணக்கங்கள்!';
+}
+else if (lowerCaseMessage.includes('நான் இப்போது படிக்கிறேன்')) {
+    botResponse = 'கவனமாக படியுங்கள்! உங்களுக்கு ஏதேனும் உதவி தேவையா?';
+}
+else if (lowerCaseMessage.includes('நான் இப்போது வேலை செய்கிறேன்')) {
+    botResponse = 'உங்கள் வேலையில் கவனம் செலுத்துங்கள். பிறகு பேசலாம்.';
+}
+else if (lowerCaseMessage.includes('நான் இப்போது சமைக்கிறேன்')) {
+    botResponse = 'சுவையாக சமையுங்கள்! என்ன சமைக்கிறீர்கள்?';
+}
+else if (lowerCaseMessage.includes('நான் இப்போது ஓய்வெடுக்கிறேன்')) {
+    botResponse = 'நன்றாக ஓய்வெடுங்கள்.';
+}
+else if (lowerCaseMessage.includes('எனக்கு உடல்நிலை சரியில்லை')) {
+    botResponse = 'விரைவில் குணமடையுங்கள். மருத்துவரை அணுகினீர்களா?';
+}
+else if (lowerCaseMessage.includes('மருந்து சாப்பிட்டேன்')) {
+    botResponse = 'நல்லது. ஓய்வெடுங்கள், விரைவில் சரியாகிவிடும்.';
+}
+else if (lowerCaseMessage.includes('வெளியே மழை பெய்கிறது')) {
+    botResponse = 'ஆம், சில சமயங்களில் மழை பெய்வது இதமாக இருக்கும்.';
+}
+else if (lowerCaseMessage.includes('வெளியே வெயில் அடிக்கிறது')) {
+    botResponse = 'தண்ணீர் நிறைய குடியுங்கள், உடலை நீர்ச்சத்துடன் வைத்திருங்கள்.';
+}
+else if (lowerCaseMessage.includes('குளிர் காலம் பிடிக்குமா')) {
+    botResponse = 'குளிர் காலத்தில் சூடான பானங்கள் அருந்துவது இதமாக இருக்கும்.';
+}
+else if (lowerCaseMessage.includes('கோடை காலம் பிடிக்குமா')) {
+    botResponse = 'கோடை காலத்தில் நீர்நிலைகளுக்குச் செல்வது புத்துணர்ச்சி அளிக்கும்.';
+}
+else if (lowerCaseMessage.includes('இலையுதிர் காலம் பற்றி')) {
+    botResponse = 'இலையுதிர் காலம் மரங்கள் தங்கள் இலைகளை உதிர்க்கும் ஒரு அழகான பருவம்.';
+}
+else if (lowerCaseMessage.includes('வசந்த காலம் பற்றி')) {
+    botResponse = 'வசந்த காலம் பூக்கள் பூத்துக் குலுங்கும் ஒரு இனிமையான பருவம்.';
+}
+else if (lowerCaseMessage.includes('உங்கள் கருத்து என்ன')) {
+    botResponse = 'எதைப் பற்றி உங்கள் கருத்தைக் கேட்கிறீர்கள்?';
+}
+else if (lowerCaseMessage.includes('இது நல்ல யோசனை')) {
+    botResponse = 'நன்றி!';
+}
+else if (lowerCaseMessage.includes('இது எனக்கு பிடிக்கவில்லை')) {
+    botResponse = 'ஓ, அப்படியா. வேறு என்ன செய்யலாம்?';
+}
+else if (lowerCaseMessage.includes('உங்களால் கணிக்க முடியுமா')) {
+    botResponse = 'நான் எதிர்காலத்தை கணிக்க முடியாது. ஆனால் என்னிடம் உள்ள தகவல்களின் அடிப்படையில் சில சாத்தியக்கூறுகளை கூற முடியும்.';
+}
+else if (lowerCaseMessage.includes('நீங்கள் ஒரு இயந்திரமா')) {
+    botResponse = 'ஆம், நான் ஒரு மேம்பட்ட கணினி நிரல்.';
+}
+else if (lowerCaseMessage.includes('உங்களுக்கு உணர்வுகள் உண்டா')) {
+    botResponse = 'நான் மனிதர்களைப் போல உணர்வுகளை அனுபவிப்பதில்லை. ஆனால் என்னால் மனித உணர்வுகளை புரிந்து கொள்ள முடியும்.';
+}
+else if (lowerCaseMessage.includes('உங்களால் கற்றுக்கொள்ள முடியுமா')) {
+    botResponse = 'ஆம், நான் தொடர்ந்து புதிய தகவல்களைக் கற்றுக்கொண்டு என்னை மேம்படுத்திக் கொள்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('உங்கள் அறிவு எல்லை என்ன')) {
+    botResponse = 'நான் ஒரு பரந்த அளவிலான தகவல்களை அணுகಬಲ್ಲೆನು, ஆனால் எனது அறிவு நான் பயிற்சி பெற்ற தரவுகளின் அடிப்படையில் அமைந்துள்ளது.';
+}
+else if (lowerCaseMessage.includes('இணைய இணைப்பு உள்ளதா')) {
+    botResponse = 'நான் செயல்பட இணைய இணைப்பு தேவை.';
+}
+else if (lowerCaseMessage.includes('சந்திராயன் பற்றி')) {
+    botResponse = 'சந்திராயன் என்பது இந்திய விண்வெளி ஆய்வு மையத்தின் (ISRO) நிலவை ஆய்வு செய்யும் திட்டமாகும். நீங்கள் எந்த சந்திராயன் திட்டத்தைப் பற்றி தெரிந்துகொள்ள விரும்புகிறீர்கள்?';
+}
+else if (lowerCaseMessage.includes('செவ்வாய் கிரகம் பற்றி')) {
+    botResponse = 'செவ்வாய் கிரகம் சூரிய குடும்பத்தில் உள்ள நான்காவது கிரகம். இது "சிவப்பு கிரகம்" என்றும் அழைக்கப்படுகிறது.';
+}
+else if (lowerCaseMessage.includes('சூரிய குடும்பம்')) {
+    botResponse = 'சூரிய குடும்பத்தில் சூரியன் மற்றும் அதைச் சுற்றி வரும் கோள்கள், துணைக்கோள்கள், சிறுகோள்கள் மற்றும் வால்மீன்கள் உள்ளன.';
+}
+else if (lowerCaseMessage.includes('கருந்துளை என்றால் என்ன')) {
+    botResponse = 'கருந்துளை என்பது அதிக ஈர்ப்பு விசை கொண்ட ஒரு விண்வெளிப் பகுதி. அதிலிருந்து ஒளிகூட தப்ப முடியாது.';
+}
+else if (lowerCaseMessage.includes('செயற்கைக்கோள் என்றால் என்ன')) {
+    botResponse = 'செயற்கைக்கோள் என்பது ஒரு கோளையோ அல்லது வேறு பெரிய பொருளையோ சுற்றி வரும் ஒரு பொருள். தகவல் தொடர்பு, வானிலை ஆய்வு போன்ற பலவற்றிற்கு இது பயன்படுகிறது.';
+}
+else if (lowerCaseMessage.includes('கணினி வைரஸ் என்றால் என்ன')) {
+    botResponse = 'கணினி வைரஸ் என்பது கணினியின் செயல்பாட்டைப் பாதிக்கும் ஒரு தீங்கு விளைவிக்கும் நிரலாகும்.';
+}
+else if (lowerCaseMessage.includes('மென்பொருள் என்றால் என்ன')) {
+    botResponse = 'மென்பொருள் என்பது கணினிக்கு என்ன செய்ய வேண்டும் மற்றும் எப்படி செய்ய வேண்டும் என்று கட்டளையிடும் நிரல்களின் தொகுப்பாகும்.';
+}
+else if (lowerCaseMessage.includes('வன்பொருள் என்றால் என்ன')) {
+    botResponse = 'வன்பொருள் என்பது கணினியின் இயற்பியல் பாகங்களான மானிட்டர், கீபோர்டு, மவுஸ் போன்றவற்றைக் குறிக்கும்.';
+}
+else if (lowerCaseMessage.includes('இணையம் எப்படி வேலை செய்கிறது')) {
+    botResponse = 'இணையம் என்பது உலகெங்கிலும் உள்ள கணினி நெட்வொர்க்குகளை இணைக்கும் ஒரு பெரிய வலையமைப்பு.';
+}
+else if (lowerCaseMessage.includes('தானியங்கி கார்கள்')) {
+    botResponse = 'தானியங்கி கார்கள் என்பவை ஓட்டுநர் உதவி இல்லாமல் தாமாகவே இயங்கும் திறன் கொண்ட வாகனங்கள்.';
+}
+else if (lowerCaseMessage.includes('ரோபாட்டிக்ஸ் என்றால் என்ன')) {
+    botResponse = 'ரோபாட்டிக்ஸ் என்பது ரோபோக்களின் வடிவமைப்பு, உருவாக்கம் மற்றும் பயன்பாடு ஆகியவற்றைப் படிக்கும் ஒரு துறையாகும்.';
+}
+else if (lowerCaseMessage.includes('நான் ஒரு படம் வரையட்டுமா')) {
+    botResponse = 'நிச்சயமாக! நீங்கள் வரைந்த படத்தை பார்க்க ஆவலாக இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('நான் ஒரு கவிதை எழுதட்டுமா')) {
+    botResponse = 'மிகவும் அருமை! உங்கள் கவிதையை கேட்க ஆவலாக இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('எனக்கு ஒரு யோசனை சொல்')) {
+    botResponse = 'எந்த மாதிரியான யோசனை உங்களுக்கு தேவை? பொழுதுபோக்கிற்கா, வேலைக்கா அல்லது வேறு எதற்காவதா?';
+}
+else if (lowerCaseMessage.Tincludes('நேரம் என்ன ஆச்சு')) { // variation of 'இன்றைய நேரம் என்ன'
+    botResponse = 'மன்னிக்கவும், என்னால் நிகழ்நேர நேரத்தை வழங்க முடியாது.';
+}
+else if (lowerCaseMessage.includes('இன்னிக்கு என்ன கிழமை')) {
+    botResponse = 'மன்னிக்கவும், என்னால் நிகழ்நேர தேதியை அல்லது கிழமையை வழங்க முடியாது.';
+}
+else if (lowerCaseMessage.includes('மீண்டும் சந்திப்போம்')) {
+    botResponse = 'நிச்சயமாக, மீண்டும் சந்திப்போம்!';
+}
+else if (lowerCaseMessage.includes('ரொம்ப நன்றி')) {
+    botResponse = 'மகிழ்ச்சி! உங்களுக்கு மேலும் உதவ நான் எப்போதும் தயாராக இருக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('உண்மையிலேயே')) {
+    botResponse = 'ஆம்.';
+}
+else if (lowerCaseMessage.includes('சரிதான்')) {
+    botResponse = 'சரி.';
+}
+else if (lowerCaseMessage.includes('அப்படியா')) {
+    botResponse = 'ஆம், அப்படித்தான்.';
+}
+else if (lowerCaseMessage.includes('ஏன் அப்படி')) {
+    botResponse = 'அதற்கான காரணத்தை நீங்கள் இன்னும் விளக்கமாக கூறினால், என்னால் பதிலளிக்க முயற்சிக்க முடியும்.';
+}
+else if (lowerCaseMessage.includes('எப்படி செய்வது')) {
+    botResponse = 'எதை எப்படி செய்வது என்று நீங்கள் கூறினால், நான் உங்களுக்கு உதவ முயற்சிக்கிறேன்.';
+}
+else if (lowerCaseMessage.includes('எங்கே போக வேண்டும்')) {
+    botResponse = 'நீங்கள் எங்கு செல்ல விரும்புகிறீர்கள் அல்லது எதைப் பற்றி கேட்கிறீர்கள்?';
+}
+else if (lowerCaseMessage.includes('யாரை சந்திக்க வேண்டும்')) {
+    botResponse = 'நீங்கள் யாரை சந்திக்க விரும்புகிறீர்கள் அல்லது யாரைப் பற்றி கேட்கிறீர்கள்?';
+}
+else if (lowerCaseMessage.includes('எப்போது வர வேண்டும்')) {
+    botResponse = 'எதைப் பற்றி கேட்கிறீர்கள்? ஒரு சந்திப்பிற்கா அல்லது வேறு எதற்காவதா?';
+}
+else if (lowerCaseMessage.includes('இதன் விலை என்ன')) {
+    botResponse = 'மன்னிக்கவும், நான் ஒரு மெய்நிகர் உதவியாளன். என்னால் பொருட்களின் விலையை நேரடியாக கூற முடியாது.';
+}
+else if (lowerCaseMessage.includes('தள்ளுபடி உள்ளதா')) {
+    botResponse = 'அது நீங்கள் வாங்கும் பொருள் மற்றும் கடையைப் பொறுத்தது.';
+}
+else if (lowerCaseMessage.includes('கடற்கரைக்கு போகலாமா')) {
+    botResponse = 'நல்ல யோசனை! கடற்கரைக்கு செல்வது மனதிற்கு இதமாக இருக்கும்.';
+}
+else if (lowerCaseMessage.includes('மலைக்கு போகலாமா')) {
+    botResponse = 'நிச்சயமாக! மலைப் பிரதேசம் ஒரு அமைதியான அனுபவத்தை தரும்.';
+}
+else if (lowerCaseMessage.includes('கோவிலுக்கு போகலாமா')) {
+    botResponse = 'தாராளமாக! எந்த கோவிலுக்கு செல்ல விரும்புகிறீர்கள்?';
+}
+else if (lowerCaseMessage.includes('பூங்காவிற்கு போகலாமா')) {
+    botResponse = 'நல்லது! பூங்காவில் சிறிது நேரம் செலவிடுவது புத்துணர்ச்சி அளிக்கும்.';
+}
+else if (lowerCaseMessage.includes('நூலகத்திற்கு போகலாமா')) {
+    botResponse = 'மிகவும் அருமையான யோசனை! நூலகத்தில் பல அறிவூட்டும் புத்தகங்கள் கிடைக்கும்.';
+}
+else if (lowerCaseMessage.includes('அறிவியல் அருங்காட்சியகம்')) {
+    botResponse = 'அறிவியல் அருங்காட்சியகம் செல்வது அறிவை வளர்க்கும் ஒரு சிறந்த வழி.';
+}
+else if (lowerCaseMessage.includes('வரலாற்று அருங்காட்சியகம்')) {
+    botResponse = 'வரலாற்று அருங்காட்சியகங்கள் கடந்த காலத்தைப் பற்றி தெரிந்துகொள்ள உதவும்.';
+}
+else if (lowerCaseMessage.includes('கலைக்கூடம் செல்லலாமா')) {
+    botResponse = 'கலைக்கூடங்கள் கலை மற்றும் கலாச்சாரத்தை ரசிக்க சிறந்த இடங்கள்.';
+}
+else if (lowerCaseMessage.includes('சந்தைக்கு போக வேண்டும்')) {
+    botResponse = 'என்ன வாங்க சந்தைக்கு செல்கிறீர்கள்?';
+}
+else if (lowerCaseMessage.includes('மருந்து கடை எங்கே')) {
+    botResponse = 'உங்கள் இருப்பிடத்தைக் கூறினால், அருகில் உள்ள மருந்துக் கடைகளை கண்டறிய உதவுவேன்.';
+}
+else if (lowerCaseMessage.includes('பல்பொருள் அங்காடி')) {
+    botResponse = 'பல்பொருள் அங்காடிகளில் பல்வேறு பொருட்கள் கிடைக்கும். உங்களுக்கு என்ன தேவை?';
+}
+else if (lowerCaseMessage.includes('மின் கட்டணம் செலுத்த வேண்டும்')) {
+    botResponse = 'நீங்கள் ஆன்லைனில் அல்லது நேரடியாக மின்வாரிய அலுவலகத்தில் மின் கட்டணத்தை செலுத்தலாம்.';
+}
+else if (lowerCaseMessage.includes('தொலைபேசி கட்டணம்')) {
+    botResponse = 'உங்கள் தொலைபேசி சேவை வழங்குநரின் இணையதளம் அல்லது செயலி மூலம் கட்டணம் செலுத்தலாம்.';
+}
+else if (lowerCaseMessage.includes('தண்ணீர் வரி')) {
+    botResponse = 'தண்ணீர் வரியை संबंधित அலுவலகத்தில் அல்லது ஆன்லைனில் செலுத்தலாம்.';
+}
+else if (lowerCaseMessage.includes('வீட்டு வாடகை')) {
+    botResponse = 'வீட்டு வாடகையை உங்கள் வீட்டு உரிமையாளரிடம் செலுத்த வேண்டும்.';
+}
+else if (lowerCaseMessage.includes('பள்ளி கட்டணம்')) {
+    botResponse = 'பள்ளி கட்டணத்தை பள்ளியின் அலுவலகத்தில் அல்லது அவர்கள் குறிப்பிடும் முறையில் செலுத்தலாம்.';
+}
+else if (lowerCaseMessage.includes('கல்லூரி கட்டணம்')) {
+    botResponse = 'கல்லூரி கட்டணத்தை கல்லூரியின் நிர்வாக அலுவலகத்தில் செலுத்தலாம்.';
+}
+else if (lowerCaseMessage.includes('யோகா செய்யலாமா')) {
+    botResponse = 'யோகா உடல் மற்றும் மன நலத்திற்கு மிகவும் நல்லது.';
+}
+else if (lowerCaseMessage.includes('தியானம் செய்யலாமா')) {
+    botResponse = 'தியானம் மன அமைதிக்கு உதவும்.';
+}
+else if (lowerCaseMessage.includes('உடற்பயிற்சி செய்யலாமா')) {
+    botResponse = 'தினமும் உடற்பயிற்சி செய்வது ஆரோக்கியத்திற்கு அவசியம்.';
+}
+else if (lowerCaseMessage.includes('நடைப்பயிற்சி')) {
+    botResponse = 'நடைப்பயிற்சி ஒரு எளிய மற்றும் சிறந்த உடற்பயிற்சி.';
+}
+else if (lowerCaseMessage.includes('ஓட்டப்பயிற்சி')) {
+    botResponse = 'ஓட்டப்பயிற்சி உடல் வலிமையை அதிகரிக்கும்.';
+}
+else if (lowerCaseMessage.includes('நீச்சல் பயிற்சி')) {
+    botResponse = 'நீச்சல் ஒரு முழுமையான உடற்பயிற்சி.';
+}
+else if (lowerCaseMessage.includes('சைக்கிள் ஓட்டுதல்')) {
+    botResponse = 'சைக்கிள் ஓட்டுவது சுற்றுச்சூழலுக்கு உகந்த ஒரு நல்ல உடற்பயிற்சி.';
+}
+else if (lowerCaseMessage.includes('காலை உணவு என்ன')) {
+    botResponse = 'காலை உணவிற்கு இட்லி, தோசை, பொங்கல் போன்ற சத்தான உணவுகளை எடுத்துக்கொள்ளலாம்.';
+}
+else if (lowerCaseMessage.includes('மதிய உணவு என்ன')) {
+    botResponse = 'மதிய உணவிற்கு சாதம், சாம்பார், ரசம், காய்கறிகள் போன்றவற்றை சாப்பிடலாம்.';
+}
+else if (lowerCaseMessage.includes('இரவு உணவு என்ன')) {
+    botResponse = 'இரவு உணவிற்கு சப்பாத்தி, இட்லி போன்ற எளிதில் ஜீரணமாகக்கூடிய உணவுகளை எடுத்துக்கொள்வது நல்லது.';
+}
+else if (lowerCaseMessage.includes('பழங்கள் சாப்பிடுங்கள்')) {
+    botResponse = 'பழங்கள் சாப்பிடுவது உடலுக்கு தேவையான வைட்டமின்கள் மற்றும் தாதுக்களை அளிக்கும்.';
+}
+else if (lowerCaseMessage.includes('காய்கறிகள் சாப்பிடுங்கள்')) {
+    botResponse = 'காய்கறிகள் உணவில் முக்கிய பங்கு வகிக்கின்றன. அவை நம்மை ஆரோக்கியமாக வைத்திருக்கும்.';
+}
+else if (lowerCaseMessage.includes('தண்ணீர் குடியுங்கள்')) {
+    botResponse = 'தினமும் போதுமான அளவு தண்ணீர் குடிப்பது மிகவும் அவசியம்.';
+}
+else if (lowerCaseMessage.includes('தூக்கம் முக்கியம்')) {
+    botResponse = 'ஆரோக்கியமான உடலுக்கும் மனதுக்கும் தினமும் 7-8 மணிநேர தூக்கம் அவசியம்.';
+}
+else if (lowerCaseMessage.includes('புகை பிடிக்காதீர்')) {
+    botResponse = 'புகைபிடித்தல் உடல் நலத்திற்கு மிகவும் கேடு விளைவிக்கும்.';
+}
+else if (lowerCaseMessage.includes('மது அருந்தாதீர்')) {
+    botResponse = 'மது அருந்துவது கல்லீரல் மற்றும் பிற உடல் உறுப்புகளை பாதிக்கும்.';
+}
+else if (lowerCaseMessage.includes('போதைப்பொருள் வேண்டாம்')) {
+    botResponse = 'போதைப்பொருட்கள் வாழ்க்கைக்கும் உடல் நலத்திற்கும் பெரும் ஆபத்தை விளைவிக்கும்.';
+}
+else if (lowerCaseMessage.includes('மகிழ்ச்சியாக இருங்கள்')) {
+    botResponse = 'வாழ்க்கையில் மகிழ்ச்சியாக இருப்பது மிகவும் முக்கியம்.';
+}
+else if (lowerCaseMessage.includes('நேர்மறையாக சிந்தியுங்கள்')) {
+    botResponse = 'நேர்மறையான எண்ணங்கள் நல்ல விளைவுகளைத் தரும்.';
+}
+else if (lowerCaseMessage.includes('பிறருக்கு உதவுங்கள்')) {
+    botResponse = 'முடிந்தவரை மற்றவர்களுக்கு உதவுவது நல்ல பண்பு.';
+}
+else if (lowerCaseMessage.includes('மன்னிக்க கற்றுக்கொள்ளுங்கள்')) {
+    botResponse = 'மன்னிப்பது மன அமைதியைத் தரும்.';
+}
+else if (lowerCaseMessage.includes('நன்றி சொல்லுங்கள்')) {
+    botResponse = 'நன்றி கூறுவது ஒரு நல்ல பழக்கம்.';
+}
+else if (lowerCaseMessage.includes('கனவு காணுங்கள்')) {
+    botResponse = 'பெரிய கனவுகளைக் கண்டு அவற்றை அடைய முயற்சி செய்யுங்கள்.';
+}
+else if (lowerCaseMessage.includes('இலக்கை அடையுங்கள்')) {
+    botResponse = 'உங்கள் இலக்குகளை அடைய கடினமாக உழைக்கவும்.';
+}
+else if (lowerCaseMessage.includes('தோல்வியைக் கண்டு துவளாதே')) {
+    botResponse = 'தோல்விகள் வெற்றிக்கான படிக்கட்டுகள். அவற்றிலிருந்து கற்றுக்கொள்ளுங்கள்.';
+}
+else if (lowerCaseMessage.includes('நேரத்தை வீணாக்காதே')) {
+    botResponse = 'நேரம் பொன்னானது. அதை சரியாக பயன்படுத்துங்கள்.';
+}
+else if (lowerCaseMessage.includes('புதியன கற்றுக்கொள்')) {
+    botResponse = 'தினமும் புதிதாக ஏதாவது கற்றுக்கொள்வது அறிவை வளர்க்கும்.';
+}
+else if (lowerCaseMessage.includes('புத்தகம் படி')) {
+    botResponse = 'புத்தகங்கள் சிறந்த நண்பர்கள். தினமும் சிறிது நேரம் புத்தகம் படியுங்கள்.';
+}
+else if (lowerCaseMessage.includes('செய்தித்தாள் படி')) {
+    botResponse = 'செய்தித்தாள்கள் படிப்பது நடப்பு நிகழ்வுகளை தெரிந்துகொள்ள உதவும்.';
+}
+else if (lowerCaseMessage.includes('பொறுமையாக இரு')) {
+    botResponse = 'பொறுமை கடலினும் பெரிது. சில விஷயங்கள் நடக்க நேரம் எடுக்கும்.';
+}
+else if (lowerCaseMessage.includes('சுறுசுறுப்பாக இரு')) {
+    botResponse = 'சுறுசுறுப்பு வெற்றியைத் தேடித் தரும்.';
+}
+else if (lowerCaseMessage.includes('ஒழுக்கமாக இரு')) {
+    botResponse = 'ஒழுக்கம் வாழ்வின் அடிப்படை.';
+}
+else if (lowerCaseMessage.includes('உண்மையாக இரு')) {
+    botResponse = 'எப்போதும் உண்மையே பேசுங்கள்.';
+}
+else if (lowerCaseMessage.includes('நம்பிக்கையுடன் இரு')) {
+    botResponse = 'தன்னம்பிக்கை வெற்றியை ஈட்டித் தரும்.';
+}
+else if (lowerCaseMessage.includes('பணிவாக இரு')) {
+    botResponse = 'பணிவு உயர்வைத் தரும்.';
+}
+else if (lowerCaseMessage.includes('அன்பாக இரு')) {
+    botResponse = 'அனைவரிடமும் அன்பாக பழகுங்கள்.';
+}
+else if (lowerCaseMessage.includes('சிரித்து பழகு')) {
+    botResponse = 'புன்னகை சிறந்த மருந்து. எப்போதும் சிரித்த முகத்துடன் இருங்கள்.';
+}
+// ... இன்னும் பல உரையாடல்களை இதேபோன்று உருவாக்கலாம் ...
+else if (lowerCaseMessage.includes('விடைபெறுகிறேன்')) {
+    botResponse = 'நன்றி! மீண்டும் சந்திப்போம்.';
+}
+            else {
+                botResponse = 'மன்னிக்கவும், எனக்கு அது புரியவில்லை. நீங்கள் வேறு ஏதாவது கேட்க விரும்புகிறீர்களா?';
+            } // கணித குறியீட்டை இங்கு மேம்படுத்தலாம்:
+// இது 5 + 3, 10-5 போன்ற வெளிப்பாடுகளை கையாள ஒரு அடிப்படை அணுகுமுறை.
+function evaluateMathExpression(expression) {
+    // ஆபரேட்டர்களை மட்டுமே அனுமதிக்கவும், பாதுகாப்பிற்காக மற்ற எழுத்துக்களை நீக்கவும்.
+    const sanitizedExpression = expression.replace(/[^0-9+\-*/(). ]/g, '');
+    try {
+        // eval() பயன்படுத்துவது பாதுகாப்பு ஆபத்தானது.
+        // நிஜ உலக பயன்பாட்டிற்கு, ஒரு பாதுகாப்பான கணிதப் பகுப்பாய்வியைப் பயன்படுத்தவும்.
+        const result = eval(sanitizedExpression);
+        if (Number.isFinite(result)) {
+            return result;
+        }
+        return 'கணக்கீடு செய்ய முடியவில்லை.';
+    } catch (e) {
+        return 'தவறான கணித வெளிப்பாடு.';
+    }
+}
+
+
+function handleBotResponse(message) {
+    const lowerCaseMessage = message.toLowerCase();
+    let botResponse = '';
+
+    // முதலில் கணிதத்தை சரிபார்க்கவும், ஏனெனில் இது மிகவும் குறிப்பிட்டது
+    const mathKeywords = ['கூட்டு', 'கழி', 'பெருக்கி', 'வகு', 'கூட்டுங்கள்', 'கழிக்கவும்', 'பெருக்கல்', 'வகுத்தல்', '+', '-', '*', '/'];
+    const containsMath = mathKeywords.some(keyword => lowerCaseMessage.includes(keyword));
+
+    if (containsMath) {
+        // எண்களையும் கணித ஆபரேட்டர்களையும் பிரித்தெடுக்க முயற்சிப்போம்
+        const match = lowerCaseMessage.match(/(\d+\s*[-+*/]\s*\d+)/); // "5 + 3" போன்ற வடிவங்களைத் தேடவும்
+        if (match && match[0]) {
+            const expression = match[0];
+            const result = evaluateMathExpression(expression);
+            if (typeof result === 'number') {
+                botResponse = `${expression} இன் முடிவு = ${result}.`;
+            } else {
+                botResponse = result; // பிழை செய்தி
+            }
+        } else {
+            // "10 மற்றும் 5 ஐ கூட்டுங்கள்" போன்ற வாக்கியங்களைக் கையாளவும்
+            const numbers = lowerCaseMessage.match(/\d+/g);
+            if (numbers && numbers.length >= 2) {
+                const num1 = parseFloat(numbers[0]);
+                const num2 = parseFloat(numbers[1]);
+                let operation = '';
+
+                if (lowerCaseMessage.includes('கூட்டு') || lowerCaseMessage.includes('கூட்டல்') || lowerCaseMessage.includes('சேர்') || lowerCaseMessage.includes('சேர்க்கவும்')) {
+                    operation = '+';
+                } else if (lowerCaseMessage.includes('கழி') || lowerCaseMessage.includes('கழித்தல்') || lowerCaseMessage.includes('கழிக்கவும்')) {
+                    operation = '-';
+                } else if (lowerCaseMessage.includes('பெருக்க') || lowerCaseMessage.includes('பெருக்கல்') || lowerCaseMessage.includes('முறை')) {
+                    operation = '*';
+                } else if (lowerCaseMessage.includes('வகு') || lowerCaseMessage.includes('வகுத்தல்')) {
+                    operation = '/';
+                }
+
+                if (operation) {
+                    const result = evaluateMathExpression(`${num1} ${operation} ${num2}`);
+                    if (typeof result === 'number') {
+                        botResponse = `${num1} ${operation} ${num2} இன் முடிவு = ${result}.`;
+                    } else {
+                        botResponse = result; // பிழை செய்தி
+                    }
+                } else {
+                    botResponse = 'கணக்கீடு செய்ய எனக்கு சரியான செயல்பாடு தேவை.';
+                }
+            } else {
+                botResponse = 'எண்களைக் கண்டறிய முடியவில்லை. தயவுசெய்து சரியான எண்களைக் கொடுக்கவும்.';
+            }
+        }
+    } else if (lowerCaseMessage.includes('உங்கள் பெயர் என்ன') || lowerCaseMessage.includes('உன் பெயர் என்ன')) {
+        botResponse = 'நான் ஒரு செயற்கை நுண்ணறிவு உதவியாளர்.';
+    } else if (lowerCaseMessage.includes('பிரியாவிடம் பேச வேண்டும்') || lowerCaseMessage.includes('பிரியாவுடன் பேசு')) {
+        botResponse = 'சரி, பிரியாவை அழைக்கிறேன். அவள் இப்போது கிடைக்கவில்லை.'; // கூடுதல் சூழல்
+    } else if (lowerCaseMessage.includes('வணக்கம்') || lowerCaseMessage.includes('ஹலோ')) {
+        botResponse = 'வணக்கம்! நான் உங்களுக்கு எப்படி உதவ முடியும்?';
+    } else if (lowerCaseMessage.includes('நன்றி')) {
+        botResponse = 'உங்களுக்கு சேவை செய்வதில் மகிழ்ச்சி!';
+    } else if (lowerCaseMessage.includes('நீ எப்படி இருக்கிறாய்') || lowerCaseMessage.includes('சுகமா')) {
+        botResponse = 'நான் ஒரு நிரல், அதனால் எனக்கு உணர்வுகள் இல்லை. ஆனால் நான் நன்றாக செயல்படுகிறேன்!';
+    } else if (lowerCaseMessage.includes('நாள் வாழ்த்துக்கள்') || lowerCaseMessage.includes('நல்ல நாள்')) {
+        botResponse = 'உங்களுக்கும் ஒரு நல்ல நாள் அமைய வாழ்த்துக்கள்!';
+    } else if (lowerCaseMessage.includes('என்ன செய்கிறாய்')) {
+        botResponse = 'நான் உங்களுக்கு உதவ காத்திருக்கிறேன். நீங்கள் எந்த கேள்வியையும் கேட்கலாம்.';
+    }
+    // மேலும் பல பொதுவான கேள்விகள் மற்றும் பதில்களை இங்கே சேர்க்கலாம்.
+    else {
+        botResponse = 'மன்னிக்கவும், எனக்குப் புரியவில்லை. நீங்கள் வேறு ஏதாவது கேட்க விரும்புகிறீர்களா?';
+    }
+
+    return botResponse;
+}
+
+            addMessage(botResponse, 'bot-message');
+            speakText(botResponse, 'ta-IN'); // சேட்போட்டின் பதிலை பேசவும்
+        }
+
+        // --- எழுத்து-குரல் (Text-to-Speech - TTS) ---
+        function speakText(text, lang) {
+            if (synth.speaking) {
+                console.log('ஏற்கனவே பேசிக்கொண்டிருக்கிறது...');
+                return;
+            }
+            if (text !== '') {
+                const utterThis = new SpeechSynthesisUtterance(text);
+                utterThis.lang = lang; // TTS க்கான மொழி
+
+                // குறிப்பிட்ட தமிழ் குரலைக் கண்டறிய முயற்சிக்கவும் (சாதனத்தைப் பொறுத்து)
+                let tamilVoice = null;
+                const voices = synth.getVoices();
+                for (const voice of voices) {
+                    if (voice.lang === 'ta-IN' || voice.lang === 'ta_IN') {
+                        tamilVoice = voice;
+                        break;
+                    }
+                }
+                if (tamilVoice) {
+                    utterThis.voice = tamilVoice;
+                    console.log('தமிழ் குரல் பயன்படுத்துகிறது:', tamilVoice.name);
+                } else {
+                    console.warn('தமிழ் குரல் கண்டறியப்படவில்லை, இயல்புநிலை உலாவியின் தமிழ் குரல் பயன்படுத்தப்படுகிறது.');
+                }
+
+                utterThis.onerror = (event) => {
+                    console.error('SpeechSynthesisUtterance.onerror', event);
+                };
+                utterThis.onend = () => {
+                    console.log('குரல் தொகுப்பு முடிந்தது.');
+                };
+                synth.speak(utterThis);
+            }
+        }
+
+        // குரல்கள் ஏற்றப்பட்டவுடன் உறுதிப்படுத்தவும் (ஆதரவு இருந்தால்)
+        if (synth.onvoiceschanged !== undefined) {
+            synth.onvoiceschanged = () => {
+                console.log('குரல்கள் மாற்றப்பட்டன/ஏற்றப்பட்டன.');
+            };
+        } else {
+             console.warn("synth.onvoiceschanged ஆதரிக்கப்படவில்லை. TTS உடனடியாக வேலை செய்யாமல் போகலாம்.");
+        }
+    </script>
+</body>
+</html>
